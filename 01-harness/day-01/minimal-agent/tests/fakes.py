@@ -1,0 +1,92 @@
+"""Deterministic test doubles for the Day 01 agent loop."""
+
+from collections.abc import Sequence
+from dataclasses import dataclass, field
+
+from minimal_harness.types import (
+    AgentMessage,
+    AssistantMessage,
+    CancellationToken,
+    ToolCall,
+    ToolExecutionResult,
+)
+
+type ModelOutcome = AssistantMessage | Exception
+type ToolOutcome = ToolExecutionResult | Exception
+
+
+@dataclass(slots=True)
+class FakeCancellationToken:
+    """Manually controlled cooperative-cancellation token."""
+
+    cancelled: bool = False
+
+    def is_cancelled(self) -> bool:
+        return self.cancelled
+
+    def cancel(self) -> None:
+        self.cancelled = True
+
+
+@dataclass(slots=True)
+class ScriptedModel:
+    """Return or raise scripted outcomes while recording immutable call snapshots."""
+
+    outcomes: Sequence[ModelOutcome]
+    calls: list[tuple[AgentMessage, ...]] = field(default_factory=list, init=False)
+    signals: list[CancellationToken | None] = field(default_factory=list, init=False)
+    _cursor: int = field(default=0, init=False)
+
+    def __post_init__(self) -> None:
+        self.outcomes = tuple(self.outcomes)
+
+    async def query(
+        self,
+        messages: Sequence[AgentMessage],
+        signal: CancellationToken | None = None,
+    ) -> AssistantMessage:
+        self.calls.append(tuple(messages))
+        self.signals.append(signal)
+        outcome = self._next_outcome()
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    def _next_outcome(self) -> ModelOutcome:
+        if self._cursor >= len(self.outcomes):
+            raise AssertionError("ScriptedModel has no response left")
+        outcome = self.outcomes[self._cursor]
+        self._cursor += 1
+        return outcome
+
+
+@dataclass(slots=True)
+class ScriptedToolExecutor:
+    """Return or raise scripted outcomes while recording tool calls and signals."""
+
+    outcomes: Sequence[ToolOutcome]
+    calls: list[ToolCall] = field(default_factory=list, init=False)
+    signals: list[CancellationToken | None] = field(default_factory=list, init=False)
+    _cursor: int = field(default=0, init=False)
+
+    def __post_init__(self) -> None:
+        self.outcomes = tuple(self.outcomes)
+
+    async def execute(
+        self,
+        tool_call: ToolCall,
+        signal: CancellationToken | None = None,
+    ) -> ToolExecutionResult:
+        self.calls.append(tool_call)
+        self.signals.append(signal)
+        outcome = self._next_outcome()
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    def _next_outcome(self) -> ToolOutcome:
+        if self._cursor >= len(self.outcomes):
+            raise AssertionError("ScriptedToolExecutor has no result left")
+        outcome = self.outcomes[self._cursor]
+        self._cursor += 1
+        return outcome

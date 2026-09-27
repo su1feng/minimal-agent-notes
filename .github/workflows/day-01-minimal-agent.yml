@@ -1,0 +1,47 @@
+name: day-01-minimal-agent
+
+on:
+  push:
+    paths:
+      - "01-harness/day-01/minimal-agent/**"
+      - ".github/workflows/day-01-minimal-agent.yml"
+  pull_request:
+    paths:
+      - "01-harness/day-01/minimal-agent/**"
+      - ".github/workflows/day-01-minimal-agent.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: 01-harness/day-01/minimal-agent
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install dependencies (locked)
+        run: uv sync --locked
+
+      - name: Lint (ruff)
+        run: uv run ruff check .
+
+      - name: Types (mypy strict)
+        run: uv run mypy src tests
+
+      - name: Tests (pytest)
+        run: uv run pytest -q

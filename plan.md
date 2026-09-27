@@ -4,13 +4,36 @@
 
 选型依据为源码、文档与测试阅读，核验于 2026-09-26。阅读时固定 commit；工程接入后自行验证目标场景。
 
+## 使用方式
+
+第 1–4 章按能力领域分类，是各阶段的定向阅读索引，不代表实施先后。唯一实施主干以第 5 节的阶段表为准，按阶段 1–7 推进；开源贡献是并行支线，不以章节位置表示开始时间。
+
+每个阶段采用“为当前设计问题阅读 → 形成实现或实验 → 运行验收”的短循环，不先读完全部仓库。只读条目列出的模块及直接相关测试；当本阶段的设计问题已有证据、验收通过后停止扩展阅读。只有验收失败、关键决策缺少证据或下一阶段需要时，才继续读取补充项目。
+
+工程实践采用三层结构：每个阶段保留一个只验证核心机制的微型手搓；学习到相应能力后，优先寻找范围清晰、无人认领且没有重复 PR 的真实开源 issue；最后把各阶段已经验证的部件整合成自己的 Minimal Agent。微型手搓不追求产品功能，禁止提前扩展 CLI、TUI、真实 provider 或与当前验收无关的抽象。
+
+### 测试责任与覆盖规则
+
+- 测试、测试替身和边界用例由 AI 编写和维护；学习者负责理解契约并实现生产代码，除非明确把某段实现委托给 AI。
+- 每项行为先建立可复现测试或在实现同时补齐测试。测试失败时优先修生产代码；只有契约本身经讨论发生变化时才能修改既有断言，不能为了转绿而削弱测试。
+- 覆盖按风险维度而不是只追求行覆盖率：正常路径、空值和边界值、非法输入、普通失败、取消／超时、顺序与并发、不可变性与别名、资源清理、适配器替换，以及涉及持久化时的崩溃恢复、迁移和重复执行。
+- 每个已修复 bug 必须留下回归测试。每天结束时至少运行相关 pytest、Ruff 和 mypy strict；阶段验收时运行全套检查。
+- “全面测试”表示覆盖当前已声明契约及已知风险，不表示提前测试尚未进入范围的未来功能。未来功能进入范围时再扩展测试。
+
+### 时间目标
+
+- 学习周期：2026-09-26 至 2026-10-07，共 12 天；最晚在国庆假期结束前完成。
+- 总预算：84 小时有效学习时间，平均每天 7 小时；休息不计入有效时间，每天实际预留约 8–9 小时。
+- 每日默认结构：源码阅读 3 小时、实现与测试 3 小时、总结与补漏 1 小时。允许按当天任务调整，不记录或累计实际学习时长。
+- “完成”指阶段 1–7 按第 5 节规则通过验收；阶段 6 没有明确需求时可以按规则记录后跳过。每日安排和实际用时记录在 `progress.md`。
+
 ## 项目总览
 
-每部分学习与工程各选 1–2 个项目；特别推荐只读指定模块，并计入总数。工程侧按场景选择，不要求全部接入。
+每部分学习与工程通常各选 1–2 个项目；特别推荐只读指定模块，并计入总数。Harness 额外加入 Tau 作为从 Python 过渡到 pi 的对照材料，不扩大到其 TUI 和 provider 实现。工程侧按场景选择，不要求全部接入。“去重项目数”按仓库去重，同一项目同时出现在学习与工程栏时只计一次。
 
-| 部分 | 学习目标 | 工程目标 | 特别推荐 | 合计 |
+| 部分 | 学习目标 | 工程目标 | 特别推荐 | 去重项目数 |
 |---|---|---|---|---:|
-| Harness | mini-swe-agent、pi | pi、Maka 局部 | DSH：插件生命周期 | 4 |
+| Harness | mini-swe-agent、Tau、pi | pi、Maka 局部 | DSH：插件生命周期 | 5 |
 | Memory | memU、LangMem | Mem0、Hindsight | — | 4 |
 | Sandbox | srt、Gondolin | Gondolin、OpenSandbox | Codex：路径与权限策略 | 4 |
 | Observability & Evaluation | OpenInference、Inspect AI | Opik、Harbor | OrcaReplay：回放与分叉 | 5 |
@@ -33,6 +56,20 @@
 
 **实践：**用假模型实现正常完成、工具失败、连续格式错误、预算耗尽四条路径。保存轨迹与崩溃恢复分别设计。
 
+#### Tau：用 Python 对照消息、工具、事件与循环
+
+[仓库](https://github.com/huggingface/tau)。它是受 pi 启发的 Python 移植项目，用作理解桥梁，不替代 pi 这个主参考。
+
+##### 可持久化消息与工具边界
+
+读 [messages.py](https://github.com/huggingface/tau/blob/main/src/tau_agent/messages.py) 和 [tools.py](https://github.com/huggingface/tau/blob/main/src/tau_agent/tools.py)：`UserMessage`、`AssistantMessage`、`ToolCall`、`ToolResultMessage`、`AgentTool` 与 `AgentToolResult` 的边界。
+
+##### 事件驱动循环
+
+读 [events.py](https://github.com/huggingface/tau/blob/main/src/tau_agent/events.py)、[loop.py](https://github.com/huggingface/tau/blob/main/src/tau_agent/loop.py) 和 [测试](https://github.com/huggingface/tau/blob/main/tests/test_agent_loop.py)：provider stream 如何变成 agent events，工具结果如何回填 transcript，工具异常如何转成错误结果。
+
+**实践：**只把 Tau 用于概念映射：先用 Python 说明一次“模型请求工具 → 执行 → 结果回填 → 模型完成”，再到 pi 核对并行工具、取消、steering／follow-up 和事件顺序。Tau 与 pi 不一致时，以 pi 的源码和测试为工程语义依据。
+
 #### pi：核心接口与交互语义
 
 [仓库](https://github.com/earendil-works/pi)。主参考，先读 agent 核心，再读必要的 coding-agent 模块。
@@ -53,7 +90,7 @@
 
 读 [session-manager.ts](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/src/core/session-manager.ts)：追加写 JSONL、`parentId` 分支树、版本迁移及上下文构建。
 
-**实践：**实现 ModelAdapter、ToolExecutor、EventStore；模型可替换，取消可传递，完整历史与当前模型输入分离。
+**实践：**实现 ModelAdapter、ToolExecutor、EventStore；模型可替换，取消可传递，完整历史与当前模型输入分离。EventStore 的 v1 事件至少保留 `schema_version`、`event_id`、`run_id`、因果／父级 ID、时间和原始载荷引用，并有版本迁移测试。冻结 v1 前提前核对 OpenInference 的关联标识和 OrcaReplay 的 run 血缘需求，但不把 trace 字段或回放录制正文直接耦合进恢复事件。
 
 #### Maka：事件事实与恢复
 
@@ -231,7 +268,7 @@
 
 读 [评分协议](https://github.com/UKGovernmentBEIS/inspect_ai/blob/main/src/inspect_ai/scorer/_scorer.py)：目标、结果与汇总指标；区分评分器故障和 Agent 低分。
 
-**实践：**用 20–30 个小任务建立 baseline，优先确定性检查工具参数、状态和产物，再增加经过校准的主观评分。
+**实践：**用 20–30 个小任务建立 baseline，优先确定性检查工具参数、状态和产物，再增加经过校准的主观评分。阶段 4 的隔离后端完成前，只允许假工具、无副作用的本地任务或一次性容器；禁止运行不受信任仓库代码、任意访问网络或写入测试目录之外的宿主路径。
 
 ### 工程目标
 
@@ -279,23 +316,39 @@
 
 ## 5. 实施顺序与验收
 
-| 阶段 | 参考 | 验收结果 |
-|---|---|---|
-| 1. 最小循环 | mini-swe-agent、pi | 模型与工具可替换；假模型覆盖正常、失败、预算退出 |
-| 2. 持久化与恢复 | pi、Maka | 工具边界故障注入；未知副作用不盲目重试 |
-| 3. 观测与基础评测 | OpenInference、Inspect | trace 关联正确；固定任务集与 baseline |
-| 4. 执行隔离 | srt、Gondolin | 一个隔离后端；超时、取消、路径与网络限制、清理可验证 |
-| 5. 工程闭环 | Opik、Harbor；服务化时看 OpenSandbox | 失败样本回归、独立 verifier、资源生命周期治理 |
-| 6. 专项能力 | 按需求选择 OrcaReplay、DSH | 回放偏差可见，或插件卸载完整 |
-| 7. 长期记忆 | memU、LangMem；工程后端择一 | 相对无记忆 baseline 有收益；覆盖过时、删除、隔离 |
+### 开工清单（不设阶段，不阻塞阶段 1）
 
-第一版范围：CLI、单 Agent、本地状态、一个模型协议、一个隔离后端。核心保留 ModelAdapter、ToolExecutor、AgentLoop、EventStore、ContextBuilder、取消与预算控制；memory、exporter、评测 adapter 按需接入。
+- 第一版使用 Python 3.12+ CLI，首个外部模型协议采用 OpenAI-compatible Chat Completions（含流式与 tool calls）；provider 类型不得进入核心接口。pi 的 TypeScript 只用于学习语义，不要求自己的实现沿用其语言。
+- 阶段 1 出现第一批测试时建立测试、lint 和 CI，不为搭脚手架推迟源码阅读。
+- 用 bwrap、容器或 Gondolin 候选执行一次最小命令并记录结果；这只是提前排雷，完整隔离在阶段 4 实现。当前候选不可用时记录可复现失败和备用路线，不阻塞阶段 1。
+
+| 阶段 | 参考与工作 | 可执行验收 |
+|---|---|---|
+| 1. 最小循环 | mini-swe-agent、Tau（Python 对照）、pi（主参考）；微型实现只含核心类型、FakeModel、FakeTool、约 100 行 AgentLoop 及测试 | 替换第二套假 ModelAdapter 和假 ToolExecutor 后，正常完成、工具失败、连续格式错误达到阈值、预算耗尽四条路径测试全部通过；取消后在设定超时内退出且不再追加执行事件 |
+| 2. 持久化与恢复 | pi、Maka；冻结事件 v1 前提前核对 OpenInference 的关联标识及 OrcaReplay 的 run／parent_run／divergence 需求 | 在工具执行前、执行成功后、结果持久化前三个边界注入崩溃；重启后分别判为未执行、结果未知、已完成，结果未知的有副作用工具不会自动重试；旧版事件 fixture 可迁移，trace／录制数据只通过稳定 ID 或载荷引用关联 |
+| 3. 观测与基础评测 | OpenInference、Inspect；先使用假工具、良性任务或一次性容器 | 20–30 个固定任务可重复运行并保存 baseline；并发运行的 span 以 `run_id`、`tool_call_id` 正确归属，取消和异常均结束 span；关闭或故障 exporter 后四条阶段 1 路径结果不变 |
+| 4. 执行隔离 | srt、Gondolin | 同一阶段 3 任务集切换到一个隔离后端后，确定性结果无非预期变化；测试证明超时和取消能终止子进程、测试目录外写入被拒绝、默认网络策略生效、运行结束后资源被清理 |
+| 5. 工程闭环 | Opik、Harbor；服务化时看 OpenSandbox | 至少一个真实失败样本加入回归集并在 CI 中稳定复现；独立 verifier 能区分环境失败、Agent 失败和验证器失败；创建失败、客户端掉线或任务过期后资源最终回收 |
+| 6. 专项能力 | 有明确需求时二选一：OrcaReplay 或 DSH | 回放方案能报告无法匹配与 divergence，且分叉保留 parent run；或插件卸载测试证明工具、监听器、后台任务三者全部释放。无需求时明确跳过，不阻塞阶段 7 |
+| 7. 长期记忆 | memU、LangMem；工程后端择一 | 在阶段 3 固定任务的记忆子集上，对比无记忆与记忆版本；实验前写明成功率、过时引用、费用和延迟阈值，结果至少满足预先定义的收益条件；新增、纠正、删除、过期、用户／项目隔离测试全部通过 |
+
+第一版范围：Python 3.12+ CLI、单 Agent、本地状态、OpenAI-compatible Chat Completions、一个隔离后端。核心保留 ModelAdapter、ToolExecutor、AgentLoop、EventStore、ContextBuilder、取消与预算控制；memory、exporter、评测 adapter 按需接入。外部模型协议只是首个 adapter，不是核心消息模型。
 
 事件日志负责恢复，trace 负责诊断，长期记忆负责跨任务知识。每读一个模块，留下一个实现、测试或实验结论。
 
+### 阶段停止与记录规则
+
+- 每进入一个阶段，先把验收项写成失败的自动化测试或可重复实验，再按需阅读和实现。
+- 阅读一个模块期间保持目标仓库版本不变；把影响实现的结论直接记入 `progress.md` 或对应测试，不单独维护版本清单。
+- 阶段验收通过即停止该阶段的扩展阅读；可选项目没有明确问题时不读、不接入。
+- 外部服务是否合并 PR、是否在线不作为阶段验收条件；只验收本地可复现的证据和产物。
+- 每天结束时更新 `progress.md`：记录实际完成、验证证据，以及所有延期内容。延期项必须包含延期原因、计划完成日期或阶段、届时的验收方式；不得只写“以后再做”。次日开始和阶段结束前先检查到期延期项。
+
 ## 6. 开源贡献
 
-贡献项目不受上面的学习名单限制。以下是 2026-09-26 查询到的待复现线索；动手前检查最新讨论与关联 PR。
+贡献是从阶段 1 开始的并行支线，不受上面的学习名单限制，也不阻塞内核阶段验收。开始前复核候选 issue 的最新状态和贡献规则；阶段 1 优先尝试一个与自研内核无依赖、范围小且能补回归测试的问题。之后只在问题与当前阶段能力相符时继续，避免为了贡献扩大核心范围。以下是 2026-09-26 查询到的待复现线索；动手前检查最新讨论与关联 PR。
+
+筛选 issue 时必须依次核对：当前是否仍能复现、是否有人在评论中认领、是否已有开放或近期关闭的关联 PR、维护者是否要求先讨论。开源 issue 可以替代同类的大型工程练习，但不能替代本阶段用于证明理解的微型实现和验收测试。
 
 | 候选 | 适合训练的能力 |
 |---|---|
@@ -314,4 +367,4 @@
 - [Harbor](https://github.com/harbor-framework/harbor/blob/main/CONTRIBUTING.md)：集成需要实际需求，核心接口先讨论。
 - [OrcaReplay](https://github.com/Continuum-AI-Corp/OrcaReplay/blob/main/CONTRIBUTING.md)：可从适配器、脱敏规则、分析器或文档一致性切入。
 
-交付标准：可复现问题 → 原因分析 → 小范围修复 → 相关测试。已有 issue 补充证据，避免重复创建。
+本地交付标准：可复现问题 → 原因分析 → 小范围修复 → 相关测试。已有 issue 补充证据，避免重复创建。提交、维护者反馈和合并属于外部结果，记录但不作为学习阶段是否完成的门槛。
