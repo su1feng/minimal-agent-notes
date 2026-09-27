@@ -52,7 +52,7 @@
 | D1-02 | Day 01 | 流式草稿、文本delta和最终不可变AssistantMessage提交边界 | 当前只有一次性FakeModel返回，缺少流式协议 | Day 02（2026-09-27），与Event层一起完成 | 流式测试证明partial不进入正式历史，完成或取消后只提交一个final／aborted消息 | 待完成 |
 | D1-03 | Day 01 | lossless JSON严格校验、循环引用／非有限浮点拒绝及freeze对应的序列化转换 | 属于EventStore持久化边界，不应塞进最小循环 | Day 03（2026-09-28），阶段2开始时 | 循环、NaN／Infinity、非法对象测试；freeze→序列化→读取往返一致 | 待完成 |
 | D1-04 | Day 01 | 用户编辑旧消息时的`parent_id`分支与当前上下文投影 | 依赖EventStore和ContextBuilder | 阶段2持久化与恢复期间 | 原分支保留，新分支不包含旧回复；两条分支均可独立恢复 | 待完成 |
-| D1-05 | Day 01 | CI workflow 首次运行确认 | 需推送到远程后由 GitHub Actions 执行，推送属外部动作 | Day 02 内（推送后） | workflow `day-01-minimal-agent` 首次运行三步全绿（Ruff／mypy／pytest） | 待完成 |
+| D1-05 | Day 01 | CI workflow 首次运行确认 | 需推送到远程后由 GitHub Actions 执行，推送属外部动作 | 2026-09-27 已完成 | workflow `day-01-minimal-agent` 首次运行三步全绿（Ruff／mypy／pytest） | 已完成 |
 
 ## 开工清单
 
@@ -60,7 +60,7 @@
 - [x] 在出现第一批测试时配置 test、lint 和 CI
       - lint／类型检查在 `pyproject.toml`：Ruff（E/F/I/UP/B/SIM）+ mypy strict；CI 见 `.github/workflows/day-01-minimal-agent.yml`。
       - 本地以 CI 的同一组命令验证通过：`uv sync --locked`、`uv run ruff check .`、`uv run mypy src tests`、`uv run pytest -q`（58 passed）。
-      - 该 workflow 尚未在 GitHub 上运行过（未推送），首次运行确认见延期账本 D1-05。
+      - GitHub Actions 首次运行已通过：Ruff、mypy strict、pytest（58 passed）全部成功，见延期账本 D1-05。
 - [ ] 对一个隔离候选执行最小 smoke test，并记录结果或备用路线
 
 开工清单不构成独立阶段，未全部完成不妨碍开始阶段 1。
@@ -234,5 +234,5 @@ Day 01 状态：已完成。三个项目的核心阅读、不可变消息类型�
 - Day 01 收尾：补齐 `.gitignore`（此前 `__pycache__/*.pyc` 会被误提交）、`DECISIONS.md`（D-01～D-09 关键设计决定，含代码位置与测试证据）与 CI workflow（`.github/workflows/day-01-minimal-agent.yml`）。
 - 以 CI 的同一组命令在本地验证通过：`uv sync --locked`、`uv run ruff check .`、`uv run mypy src tests`、`uv run pytest -q`（58 passed）。
 - 建立 Day 01 commit 锚点：`e782430`（微型实现、设计决定、CI 随此提交入库）。
-- 遗留：CI 尚未在 GitHub 首次运行（未推送），见 D1-05；阶段 1 最后一项验收"取消后不再追加执行事件"依赖 Day 02 的事件层（D1-01）。
+- GitHub Actions 首次运行成功，D1-05 已关闭；阶段 1 最后一项验收"取消后不再追加执行事件"依赖 Day 02 的事件层（D1-01）。
 - 环境备注：本地 `uv` 默认缓存目录不可写，运行 `uv` 需设置 `UV_CACHE_DIR` 指向工作区内目录（如项目下的 `.uv-cache`，已加入 `.gitignore`）。
