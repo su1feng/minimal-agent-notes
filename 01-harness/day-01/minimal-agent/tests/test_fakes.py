@@ -3,6 +3,7 @@ import pytest
 from minimal_harness.types import (
     AgentMessage,
     AssistantMessage,
+    AssistantStreamEnd,
     ModelAdapter,
     TextContent,
     ToolCall,
@@ -24,9 +25,9 @@ async def test_scripted_model_returns_outcomes_in_order_and_records_snapshots() 
     model = ScriptedModel([first, second])
     history: list[AgentMessage] = [UserMessage(content="hello")]
 
-    assert await model.query(history) is first
+    assert [event async for event in model.stream(history)] == [AssistantStreamEnd(message=first)]
     history.append(first)
-    assert await model.query(history) is second
+    assert [event async for event in model.stream(history)] == [AssistantStreamEnd(message=second)]
 
     assert model.calls == [
         (UserMessage(content="hello"),),
@@ -40,7 +41,7 @@ async def test_scripted_model_raises_scripted_exception() -> None:
     model = ScriptedModel([failure])
 
     with pytest.raises(RuntimeError, match="provider failed") as captured:
-        await model.query([])
+        _ = [event async for event in model.stream([])]
 
     assert captured.value is failure
 
@@ -50,7 +51,7 @@ async def test_scripted_model_fails_loudly_when_script_is_exhausted() -> None:
     model = ScriptedModel([])
 
     with pytest.raises(AssertionError, match="no response left"):
-        await model.query([])
+        _ = [event async for event in model.stream([])]
 
 
 @pytest.mark.asyncio
@@ -58,7 +59,7 @@ async def test_scripted_model_records_the_same_cancellation_token() -> None:
     token = FakeCancellationToken()
     model = ScriptedModel([final_answer("done")])
 
-    await model.query([], token)
+    _ = [event async for event in model.stream([], token)]
 
     assert model.signals == [token]
 

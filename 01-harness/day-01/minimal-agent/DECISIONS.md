@@ -1,18 +1,18 @@
-# Day 01 关键设计决定（阶段 1：最小循环）
+# Day 01–02 关键设计决定（阶段 1：最小循环）
 
-范围：本文件记录 Day-01 微型实现（`src/minimal_harness/`）已经生效的设计决定，每条都给出代码位置与测试证据。
-阶段 1 尚未定型的两项——生命周期事件层（D1-01）与流式提交边界（D1-02）——不在本文件内，待 Day 02 定型后追加。
+范围：本文件记录阶段 1 微型实现（`src/minimal_harness/`）已经生效的设计决定，每条都给出代码位置与测试证据。
+Day 02 已完成生命周期事件层（D1-01）与流式提交边界（D1-02），对应决定见 D-10 与 D-11。
 
-代码基线：本文档与工作区 58 项测试、Ruff、mypy strict 同时通过的状态对应（`progress.md` 阶段记录中的 commit 锚点）。
+代码基线：本文档与工作区 67 项测试、Ruff、mypy strict 同时通过的状态对应。
 
 ---
 
-## D-01 消息与运行事件分离，阶段 1 只实现消息
+## D-01 消息与运行事件分离
 
-- **决定**：本阶段只维护 `AgentMessage` 历史（`UserMessage` / `AssistantMessage` / `ToolResultMessage`），不实现生命周期事件类型。
+- **决定**：Day 01 只维护 `AgentMessage` 历史；Day 02 新增的生命周期事件仍是独立运行信号，不进入消息历史。
 - **理由**：消息是可持久化的事实，事件是给调用方的运行信号。阅读 Tau／pi 的结论是二者边界不同，且**完成顺序可以不同于持久化顺序**。
-- **证据**：`src/minimal_harness/types.py` 只有消息类型，无任何 Event 类型；`README.md` 范围限制明确"Event 与 Message 保持分离；本练习暂不实现 Event"。
-- **影响**：验收项"取消后不再追加执行事件"必须等事件层（延期项 D1-01）才可断言，因此当前无法勾选。
+- **证据**：消息定义在 `types.py`，生命周期事件定义在 `events.py`；流式测试证明 `AssistantDraft` 只出现在事件中。
+- **影响**：后续 EventStore 只持久化消息与恢复事实，不直接把 UI 更新事件当作恢复日志。
 
 ## D-02 全部消息不可变
 
@@ -41,10 +41,10 @@
 
 ## D-06 取消不是错误结果
 
-- **决定**：取消以 `asyncio.CancelledError` 传播；`_execute_tool` 只捕获 `Exception`，因此 `CancelledError`（Python 3.8+ 起继承 `BaseException`）**不会**被转成错误结果；模型调用前、模型返回后、每个工具执行前各检查一次 `signal.is_cancelled()`。
+- **决定**：取消以 `asyncio.CancelledError` 传播；`_execute_tool` 只捕获 `Exception`，因此 `CancelledError`（Python 3.8+ 起继承 `BaseException`）**不会**被转成错误结果；模型流启动前、每个 stream event 到达后、每个工具执行前各检查一次 `signal.is_cancelled()`。
 - **理由**：取消必须能穿透到底层；把取消吞成 `is_error=True` 会让上层误判为可恢复失败。
 - **证据**：`test_pre_cancelled_run_does_not_call_model_or_tool`、`test_cancellation_observed_after_model_return_prevents_tool_start`、`test_tool_task_cancellation_is_not_converted_to_an_error_result`。
-- **遗留**：事件顺序与"在设定超时内退出"的量化断言属于 D1-01。
+- **证据补充**：`test_cancellation_during_a_tool_closes_promptly_without_result_events` 量化验证 0.1 秒内退出；`test_pre_cancelled_run_only_emits_the_lifecycle_boundary` 验证取消后没有模型／工具执行事件。
 
 ## D-07 格式错误通过反馈重试，并计入步数
 
@@ -63,8 +63,38 @@
 
 - **决定**：每次模型调用传入 `tuple(messages)` 的完整历史快照；不区分"完整历史"与"当前模型输入"。
 - **理由**：投影（截断、系统提示、上下文构建）属于阶段 2 的 ContextBuilder，提前做会把持久化语义混进最小循环。
-- **证据**：`ModelAdapter.query(messages, signal)` 签名；`tests/fakes.py` 与 `tests/alternatives.py` 都记录每次收到的快照，可用于断言输入隔离。
+- **证据**：`ModelAdapter.stream(messages, signal)` 签名；`tests/fakes.py` 与 `tests/alternatives.py` 都记录每次收到的快照，可用于断言输入隔离。
 - **遗留**：D1-04（编辑旧消息的 `parent_id` 分支与上下文投影，阶段 2）。
+
+## D-10 可等待事件 sink 固定生命周期顺序
+
+- **决定**：`AgentEventSink.emit()` 为异步接口，循环逐个等待事件；参数校验通过后发出 `agent_start`，所有已开始运行都在 `finally` 中以唯一的 `agent_end` 收尾。
+- **理由**：等待 sink 可以提供明确的事件先后关系；`finally` 保证正常返回、步数耗尽、契约异常和取消共享同一个生命周期闭合规则。
+- **顺序**：工具路径固定为 assistant 消息结束 → `tool_execution_start` → `tool_execution_end` → tool result 消息开始／结束；工具取消只保留 start，不伪造 end 或结果消息。
+- **证据**：`tests/test_events.py` 覆盖直接回答、工具调用、工具异常、预取消、工具中取消及步数耗尽，共 6 项。
+
+## D-11 流式草稿只存在于事件，正式历史只提交终态
+
+- **决定**：`ModelAdapter.stream()` 只返回 `AsyncIterator[AssistantStreamEvent]`；一次性响应也表示为只含一个 `AssistantStreamEnd` 的短流。文本 delta 累积为不可变 `AssistantDraft` 并通过 `message_update` 发出，不加入 `AgentMessage` 历史。
+- **完成边界**：收到 `AssistantStreamEnd` 时只提交其 final message；流式过程中取消时只提交一条包含现有文本的 `stop_reason="aborted"` 消息，然后继续传播 `CancelledError`。
+- **理由**：partial 是随时会变化的运行视图，不能污染可恢复历史；final／aborted 才是稳定事实。
+- **证据**：`tests/test_streaming.py` 覆盖两段 delta 合并、final 单次提交、取消后 aborted 单次提交，以及缺少终止事件的契约错误。
+
+## D-12 ModelAdapter 统一为 stream-only，与 pi／DSH 的单路径契约对齐
+
+- **决定**：删除 `AssistantMessage | AsyncIterator[...]` 双返回类型和直接消息分支。所有 ModelAdapter——包括一次性测试替身——都实现同一个 `stream()` 协议；AgentLoop 始终消费事件流并等待 `AssistantStreamEnd`。
+- **与 pi 的关系**：pi 的 Agent `StreamFn` 只返回 `AssistantMessageEventStream`，其 `complete()` 也是消费 stream 后取 `result()` 的便利包装。当前实现与它保持相同的单路径 Adapter 形状，但没有复制低层 `context.messages` 尾项替换；partial 仍只存在于运行事件。
+- **与 DSH 的关系**：DSH Adapter 唯一必需方法也是 `stream()`，返回 `AsyncIterable<StreamChunk>`。当前实现与它保持相同的单路径入口，但暂未实现 `AssistantStreamAttempt`、原始 stream、block assembler 和 attempt settlement。
+- **阶段 1 取舍**：内核累积文本 draft，adapter 在 `AssistantStreamEnd` 中给出权威 final，当前不要求二者内容相等。这保持协议最小，但意味着本层暂不负责 reasoning／tool-call delta 的完整组装，也不能独立重放 provider stream。
+- **阶段 2 演进**：EventStore 设计时再引入稳定 `attempt_id`、revision 和 settlement 事件；只持久化 settlement 或原始流引用，不持久化 UI update。需要恢复失败尝试时新增非消息型 attempt record，并区分用户取消、provider 失败与无安全可见内容的取消。
+
+## D-13 阶段 2 采用 DSH 主干 + pi 局部扩展的流式折中方案
+
+- **决定**：Provider Adapter 只负责把供应商私有协议翻译为最小 canonical chunk；Core Assembler 统一构造 `AssistantMessage`、判断安全取消内容，并通过稳定 `attempt_id` settlement 到 EventStore。
+- **最小公共协议**：第一版只覆盖 text、tool call、usage 和 finish。只有影响 Agent 控制流、恢复或跨 Provider 评测的字段才能进入 canonical 协议；图片、音频、citation 等没有当前需求时不提前加入。
+- **局部扩展**：Provider 私有但 Core 不需要解释的数据，放入包含 `provider`、`schema_version` 和 JSON `data` 的 opaque replay state。Core 只校验、保存和回传；对应 Adapter 负责解释，避免每个私有字段都扩张公共协议。
+- **持久化边界**：UI draft/update 是瞬时信号，不直接作为恢复日志；EventStore 记录 attempt start／settlement、正式或安全中断消息，以及按需保存的压缩原始流或引用。失败或无安全内容的 attempt 不伪装成 `AssistantMessage`。
+- **限制**：该方案能在已实现范围内获得 DSH 类似的取消、恢复和观察边界，但不会自动拥有 DSH 全部功能；一旦 Provider 新字段会影响 Agent 行为，就必须显式扩展 canonical 协议和 Core，而不能藏进 opaque metadata。
 
 ---
 
@@ -78,4 +108,4 @@
 | 预算耗尽 | `test_stops_before_starting_a_model_call_beyond_the_step_limit` |
 | 替换第二套 ModelAdapter | `test_substitutability.py::test_rule_based_model_and_echo_tool_run_through_the_same_loop` |
 | 替换第二套 ToolExecutor | 同上 + `test_echo_tool_reports_an_unknown_tool_as_a_normal_error_result`、`test_echo_tool_reports_invalid_arguments_without_raising` |
-| 取消后限时退出且不再追加执行事件 | **未完成**：现有 3 项取消测试只证明不调用模型／工具，事件断言依赖 D1-01 |
+| 取消后限时退出且不再追加执行事件 | `test_cancellation_during_a_tool_closes_promptly_without_result_events`、`test_pre_cancelled_run_only_emits_the_lifecycle_boundary` |

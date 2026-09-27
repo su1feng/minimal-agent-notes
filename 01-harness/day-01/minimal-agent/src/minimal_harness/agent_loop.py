@@ -1,14 +1,30 @@
-"""Minimal provider/tool loop for the Day 01 exercise."""
+"""Minimal provider/tool loop with Day 02 events and streaming support."""
 
 import asyncio
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
 
+from minimal_harness.events import (
+    AgentEndEvent,
+    AgentEvent,
+    AgentEventSink,
+    AgentStartEvent,
+    AssistantDraft,
+    MessageEndEvent,
+    MessageStartEvent,
+    MessageUpdateEvent,
+    ToolExecutionEndEvent,
+    ToolExecutionStartEvent,
+)
 from minimal_harness.types import (
     AgentMessage,
     AssistantMessage,
+    AssistantStreamEnd,
+    AssistantStreamEvent,
+    AssistantTextDelta,
     CancellationToken,
     ModelAdapter,
     ModelFormatError,
+    TextContent,
     ToolCall,
     ToolExecutionResult,
     ToolExecutor,
@@ -24,6 +40,7 @@ async def run_agent_loop(
     signal: CancellationToken | None = None,
     max_steps: int = 8,
     max_consecutive_format_errors: int = 3,
+    event_sink: AgentEventSink | None = None,
 ) -> tuple[AgentMessage, ...]:
     """Run model turns until a final, failed, or aborted assistant message."""
     if max_steps <= 0:
@@ -34,50 +51,136 @@ async def run_agent_loop(
     messages = list(initial_messages)
     consecutive_format_errors = 0
 
-    for _ in range(max_steps):
-        _raise_if_cancelled(signal)
-        try:
-            assistant = await model.query(tuple(messages), signal)
-        except ModelFormatError as error:
+    await _emit(event_sink, AgentStartEvent())
+    try:
+        for _ in range(max_steps):
             _raise_if_cancelled(signal)
-            consecutive_format_errors += 1
-            messages.append(error.feedback)
-            reached_limit = (
-                max_consecutive_format_errors > 0
-                and consecutive_format_errors >= max_consecutive_format_errors
-            )
-            if reached_limit:
-                messages.append(
-                    AssistantMessage(
-                        content=(), stop_reason="error", error_message="RepeatedFormatError"
-                    )
+            try:
+                assistant = await _stream_assistant_response(
+                    model.stream(tuple(messages), signal),
+                    messages,
+                    signal,
+                    event_sink,
                 )
+            except ModelFormatError as error:
+                _raise_if_cancelled(signal)
+                consecutive_format_errors += 1
+                await _append_message(messages, error.feedback, event_sink)
+                reached_limit = (
+                    max_consecutive_format_errors > 0
+                    and consecutive_format_errors >= max_consecutive_format_errors
+                )
+                if reached_limit:
+                    await _append_message(
+                        messages,
+                        AssistantMessage(
+                            content=(), stop_reason="error", error_message="RepeatedFormatError"
+                        ),
+                        event_sink,
+                    )
+                    return tuple(messages)
+                continue
+
+            consecutive_format_errors = 0
+
+            if assistant.stop_reason in {"error", "aborted"}:
                 return tuple(messages)
-            continue
 
-        _raise_if_cancelled(signal)
-        consecutive_format_errors = 0
-        messages.append(assistant)
+            tool_calls = tuple(block for block in assistant.content if isinstance(block, ToolCall))
 
-        if assistant.stop_reason in {"error", "aborted"}:
-            return tuple(messages)
+            if assistant.stop_reason == "stop":
+                if tool_calls:
+                    raise ValueError("stop response must not contain a ToolCall")
+                return tuple(messages)
 
-        tool_calls = tuple(block for block in assistant.content if isinstance(block, ToolCall))
+            if not tool_calls:
+                raise ValueError("toolUse response must contain at least one ToolCall")
 
-        if assistant.stop_reason == "stop":
-            if tool_calls:
-                raise ValueError("stop response must not contain a ToolCall")
-            return tuple(messages)
+            for tool_call in tool_calls:
+                _raise_if_cancelled(signal)
+                await _emit(event_sink, ToolExecutionStartEvent(tool_call=tool_call))
+                result = await _execute_tool(tool_executor, tool_call, signal)
+                await _emit(
+                    event_sink,
+                    ToolExecutionEndEvent(tool_call=tool_call, result=result),
+                )
+                await _append_message(
+                    messages,
+                    _to_tool_result_message(tool_call, result),
+                    event_sink,
+                )
 
-        if not tool_calls:
-            raise ValueError("toolUse response must contain at least one ToolCall")
+        raise RuntimeError("step limit exceeded")
+    finally:
+        await _emit(event_sink, AgentEndEvent(messages=tuple(messages)))
 
-        for tool_call in tool_calls:
+
+async def _emit(event_sink: AgentEventSink | None, event: AgentEvent) -> None:
+    if event_sink is not None:
+        await event_sink.emit(event)
+
+
+async def _append_message(
+    messages: list[AgentMessage],
+    message: AgentMessage,
+    event_sink: AgentEventSink | None,
+) -> None:
+    await _emit(event_sink, MessageStartEvent(message=message))
+    messages.append(message)
+    await _emit(event_sink, MessageEndEvent(message=message))
+
+
+async def _stream_assistant_response(
+    stream: AsyncIterator[AssistantStreamEvent],
+    messages: list[AgentMessage],
+    signal: CancellationToken | None,
+    event_sink: AgentEventSink | None,
+) -> AssistantMessage:
+    text = ""
+    started = False
+    try:
+        async for stream_event in stream:
             _raise_if_cancelled(signal)
-            result = await _execute_tool(tool_executor, tool_call, signal)
-            messages.append(_to_tool_result_message(tool_call, result))
+            if isinstance(stream_event, AssistantTextDelta):
+                if not started:
+                    await _emit(
+                        event_sink,
+                        MessageStartEvent(message=AssistantDraft(text="")),
+                    )
+                    started = True
+                text += stream_event.delta
+                await _emit(
+                    event_sink,
+                    MessageUpdateEvent(
+                        message=AssistantDraft(text=text),
+                        delta=stream_event.delta,
+                    ),
+                )
+                continue
 
-    raise RuntimeError("step limit exceeded")
+            if isinstance(stream_event, AssistantStreamEnd):
+                final = stream_event.message
+                if started:
+                    messages.append(final)
+                    await _emit(event_sink, MessageEndEvent(message=final))
+                else:
+                    await _append_message(messages, final, event_sink)
+                return final
+
+        raise ValueError("stream ended without an AssistantStreamEnd")
+    except asyncio.CancelledError:
+        content = (TextContent(text=text),) if text else ()
+        aborted = AssistantMessage(
+            content=content,
+            stop_reason="aborted",
+            error_message="Cancelled",
+        )
+        if started:
+            messages.append(aborted)
+            await _emit(event_sink, MessageEndEvent(message=aborted))
+        else:
+            await _append_message(messages, aborted, event_sink)
+        raise
 
 
 def _raise_if_cancelled(signal: CancellationToken | None) -> None:

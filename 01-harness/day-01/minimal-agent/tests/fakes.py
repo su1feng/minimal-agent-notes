@@ -1,11 +1,13 @@
 """Deterministic test doubles for the Day 01 agent loop."""
 
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, field
 
 from minimal_harness.types import (
     AgentMessage,
     AssistantMessage,
+    AssistantStreamEnd,
+    AssistantStreamEvent,
     CancellationToken,
     ToolCall,
     ToolExecutionResult,
@@ -40,17 +42,17 @@ class ScriptedModel:
     def __post_init__(self) -> None:
         self.outcomes = tuple(self.outcomes)
 
-    async def query(
+    async def stream(
         self,
         messages: Sequence[AgentMessage],
         signal: CancellationToken | None = None,
-    ) -> AssistantMessage:
+    ) -> AsyncIterator[AssistantStreamEvent]:
         self.calls.append(tuple(messages))
         self.signals.append(signal)
         outcome = self._next_outcome()
         if isinstance(outcome, Exception):
             raise outcome
-        return outcome
+        yield AssistantStreamEnd(message=outcome)
 
     def _next_outcome(self) -> ModelOutcome:
         if self._cursor >= len(self.outcomes):

@@ -14,7 +14,7 @@
 | 日期 | 计划时长 | 状态 | 当日内容／备注 |
 |---|---:|---|---|
 | 09-26 | 7h | 已完成（跨日） | mini-swe-agent、Tau、pi 核心阅读及最小循环实现全部完成 |
-| 09-27 | 7h | 进行中 | Day 02：完成Event层与取消事件顺序，记录设计决定并收尾阶段1 |
+| 09-27 | 7h | 已完成 | Day 02：完成 Event 层、流式提交边界与取消事件顺序；阶段 1 验收通过 |
 | 09-28 | 7h | 未开始 | — |
 | 09-29 | 7h | 未开始 | — |
 | 09-30 | 7h | 未开始 | — |
@@ -31,7 +31,7 @@
 
 | 当前阶段 | 状态 | 开始日期 | 最近更新 | 下一步 |
 |---|---|---|---|---|
-| 阶段 1：最小循环 | 进行中 | 2026-09-26 | 2026-09-27 | Day 01已完成；Day 02实现Event层并验证取消后不再产生执行事件 |
+| 阶段 1：最小循环 | 已完成 | 2026-09-26 | 2026-09-27 | 进入阶段 2：先冻结最小 canonical stream、Core Assembler 与 attempt settlement，再实现 EventStore 和恢复测试 |
 
 ## 每日收尾规则
 
@@ -48,8 +48,8 @@
 
 | ID | 来源 | 延期内容 | 原因 | 计划完成 | 验收方式 | 状态 |
 |---|---|---|---|---|---|---|
-| D1-01 | Day 01 | AgentEvent类型、事件sink及取消后的事件顺序 | Day 01限定为消息与最小循环，尚未引入Event层 | Day 02（2026-09-27），阶段1收尾前 | 测试证明生命周期闭合，取消后不再发出新的模型／工具执行事件 | 待完成 |
-| D1-02 | Day 01 | 流式草稿、文本delta和最终不可变AssistantMessage提交边界 | 当前只有一次性FakeModel返回，缺少流式协议 | Day 02（2026-09-27），与Event层一起完成 | 流式测试证明partial不进入正式历史，完成或取消后只提交一个final／aborted消息 | 待完成 |
+| D1-01 | Day 01 | AgentEvent类型、事件sink及取消后的事件顺序 | Day 01限定为消息与最小循环，尚未引入Event层 | 2026-09-27 已完成 | 测试证明生命周期闭合，取消后不再发出新的模型／工具执行事件 | 已完成 |
+| D1-02 | Day 01 | 流式草稿、文本delta和最终不可变AssistantMessage提交边界 | 当前只有一次性FakeModel返回，缺少流式协议 | 2026-09-27 已完成 | 流式测试证明partial不进入正式历史，完成或取消后只提交一个final／aborted消息 | 已完成 |
 | D1-03 | Day 01 | lossless JSON严格校验、循环引用／非有限浮点拒绝及freeze对应的序列化转换 | 属于EventStore持久化边界，不应塞进最小循环 | Day 03（2026-09-28），阶段2开始时 | 循环、NaN／Infinity、非法对象测试；freeze→序列化→读取往返一致 | 待完成 |
 | D1-04 | Day 01 | 用户编辑旧消息时的`parent_id`分支与当前上下文投影 | 依赖EventStore和ContextBuilder | 阶段2持久化与恢复期间 | 原分支保留，新分支不包含旧回复；两条分支均可独立恢复 | 待完成 |
 | D1-05 | Day 01 | CI workflow 首次运行确认 | 需推送到远程后由 GitHub Actions 执行，推送属外部动作 | 2026-09-27 已完成 | workflow `day-01-minimal-agent` 首次运行三步全绿（Ruff／mypy／pytest） | 已完成 |
@@ -67,7 +67,7 @@
 
 ## 阶段 1：最小循环
 
-状态：进行中
+状态：已完成
 
 ### 今日清单：2026-09-26
 
@@ -107,7 +107,7 @@ Day 01 状态：已完成。三个项目的核心阅读、不可变消息类型�
 - [x] 实现最小 `ModelAdapter`
 - [x] 实现最小 `ToolExecutor`
 - [x] 实现最小 `AgentLoop`
-- [x] 记录本阶段的关键设计决定：见 `01-harness/day-01/minimal-agent/DECISIONS.md`（D-01～D-09，每条含代码位置与测试证据）
+- [x] 记录本阶段及下一阶段边界决定：见 `01-harness/day-01/minimal-agent/DECISIONS.md`（D-01～D-13；D-13 为阶段 2 已选方案）
 - [ ] 阶段 1 验收后筛选一个无人认领、没有重复 PR 的 Tau 或其他 Harness issue
 
 ### 验收
@@ -118,20 +118,24 @@ Day 01 状态：已完成。三个项目的核心阅读、不可变消息类型�
 - [x] 预算耗尽路径通过
 - [x] 更换第二套假 ModelAdapter 后以上测试仍通过
 - [x] 更换第二套假 ToolExecutor 后以上测试仍通过
-- [ ] 取消后在设定超时内退出，且不再追加执行事件
+- [x] 取消后在设定超时内退出，且不再追加执行事件
 
 ### 阶段记录
 
 - 开始日期：2026-09-26
-- 完成日期：—（等待 Day 02 的最后一项验收）
-- commit／产物：Day 01 微型实现（58 项测试）+ `DECISIONS.md` + CI workflow；commit 锚点 `e782430`（见下方日志）
-- 结论与遗留问题：核心循环与四条验收路径已通过，第二套 Adapter／ToolExecutor 替换已验证；最后一项"取消后不再追加执行事件"依赖事件层（D1-01），流式提交边界为 D1-02，均在 Day 02 完成
+- 完成日期：2026-09-27
+- commit／产物：Day 01 微型实现（58 项测试）+ `DECISIONS.md` + CI workflow，commit 锚点 `e782430`；Day 02 Event／streaming 扩展与 67 项测试已提交
+- 结论与遗留问题：67 项测试、Ruff 和 mypy strict 全部通过；核心循环、Adapter／ToolExecutor 替换、事件生命周期、量化取消及流式 final／aborted 单次提交均已验证。D1-03 与 D1-04 按原计划进入阶段 2。
 
 ## 阶段 2：持久化与恢复
 
 状态：未开始
 
 - [ ] 阅读 pi session manager、Maka runtime event 与恢复测试
+- [ ] 阅读 DSH `StreamChunk`、`BlockAssembler`、`AssistantStreamAttempt` 及 settlement 路径
+- [ ] 定义最小 canonical stream：text、tool call、usage、finish；为 Provider replay state 增加归属与 schema version
+- [ ] 实现 Core Assembler，并用两套假 Provider 证明相同 canonical 输入生成相同 `AssistantMessage`
+- [ ] 实现 `attempt_id` 与 settlement；取消只提交安全 block，半截 tool call 不进入 transcript
 - [ ] 冻结事件 v1 前核对 OpenInference 关联标识和 OrcaReplay run 血缘
 - [ ] 实现 EventStore、上下文投影和 schema 迁移
 - [ ] 完成三个工具边界的崩溃注入测试
@@ -236,3 +240,11 @@ Day 01 状态：已完成。三个项目的核心阅读、不可变消息类型�
 - 建立 Day 01 commit 锚点：`e782430`（微型实现、设计决定、CI 随此提交入库）。
 - GitHub Actions 首次运行成功，D1-05 已关闭；阶段 1 最后一项验收"取消后不再追加执行事件"依赖 Day 02 的事件层（D1-01）。
 - 环境备注：本地 `uv` 默认缓存目录不可写，运行 `uv` 需设置 `UV_CACHE_DIR` 指向工作区内目录（如项目下的 `.uv-cache`，已加入 `.gitignore`）。
+- Day 02 启动：新增 `tests/test_events.py`，先固定非流式 Event 生命周期契约，覆盖直接回答、工具调用、工具异常和工具执行中取消。
+- Event 测试约定：sink 的 `emit()` 可等待以保证顺序；运行一旦发出 `agent_start`，`agent_end` 必须成为最后事件；工具结束事件必须先于对应的工具结果消息事件。
+- 当前为预期红灯：新测试通过 Ruff，但因生产侧尚无 `minimal_harness.events` 而在 pytest 收集阶段失败；下一步由学习者实现事件类型与 sink 接口，再逐步推进到事件顺序断言。
+- 完成 Event 类型、异步 sink 与 AgentLoop 接入：直接回答、工具调用、工具异常、预取消、工具中取消和步数耗尽均以确定顺序发出事件；已启动运行由 `finally` 保证 `agent_end` 收尾。
+- 完成流式协议：`ModelAdapter.stream()` 统一返回异步事件流，一次性 FakeModel 也只产生一个 `AssistantStreamEnd`；`AssistantDraft` 只通过 start／update 事件暴露，final 才写入历史；取消时提交唯一 aborted 消息后继续传播 `CancelledError`。
+- Day 02 全量验收通过：Ruff、mypy strict、pytest 全绿（67 passed）；D1-01、D1-02 关闭，阶段 1 完成。
+- 补充并修订 D-12：ModelAdapter 收敛为 stream-only 单路径，与 pi／DSH 的 Adapter 形状对齐；保留“瞬时 draft + final settlement”的最小历史边界，并把 attempt ID、revision、失败尝试记录和多类型 block assembler 延后到阶段 2。
+- 选定阶段 2 流式折中方案：采用 DSH 式“Provider Adapter 翻译 canonical chunk → Core Assembler → attempt settlement”主干，同时通过最小公共协议和带版本的 opaque replay state 保留 pi 式局部 Provider 扩展；当前只同步计划，不扩大 Day 02 实现。

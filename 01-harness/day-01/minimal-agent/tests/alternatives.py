@@ -1,11 +1,13 @@
 """Behavior-driven alternative adapters used to prove protocol substitutability."""
 
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, field
 
 from minimal_harness.types import (
     AgentMessage,
     AssistantMessage,
+    AssistantStreamEnd,
+    AssistantStreamEvent,
     CancellationToken,
     TextContent,
     ToolCall,
@@ -22,42 +24,50 @@ class RuleBasedEchoModel:
     calls: list[tuple[AgentMessage, ...]] = field(default_factory=list, init=False)
     signals: list[CancellationToken | None] = field(default_factory=list, init=False)
 
-    async def query(
+    async def stream(
         self,
         messages: Sequence[AgentMessage],
         signal: CancellationToken | None = None,
-    ) -> AssistantMessage:
+    ) -> AsyncIterator[AssistantStreamEvent]:
         snapshot = tuple(messages)
         self.calls.append(snapshot)
         self.signals.append(signal)
 
         if snapshot and isinstance(snapshot[-1], ToolResultMessage):
             result = snapshot[-1]
-            return AssistantMessage(
-                content=(TextContent(text=f"echo: {result.content}"),),
-                stop_reason="stop",
+            yield AssistantStreamEnd(
+                message=AssistantMessage(
+                    content=(TextContent(text=f"echo: {result.content}"),),
+                    stop_reason="stop",
+                )
             )
+            return
 
         user_message = next(
             (message for message in reversed(snapshot) if isinstance(message, UserMessage)),
             None,
         )
         if user_message is None:
-            return AssistantMessage(
-                content=(),
-                stop_reason="error",
-                error_message="No user message found",
+            yield AssistantStreamEnd(
+                message=AssistantMessage(
+                    content=(),
+                    stop_reason="error",
+                    error_message="No user message found",
+                )
             )
+            return
 
-        return AssistantMessage(
-            content=(
-                ToolCall(
-                    id="echo-1",
-                    name="echo",
-                    arguments={"text": user_message.content},
+        yield AssistantStreamEnd(
+            message=AssistantMessage(
+                content=(
+                    ToolCall(
+                        id="echo-1",
+                        name="echo",
+                        arguments={"text": user_message.content},
+                    ),
                 ),
-            ),
-            stop_reason="toolUse",
+                stop_reason="toolUse",
+            )
         )
 
 

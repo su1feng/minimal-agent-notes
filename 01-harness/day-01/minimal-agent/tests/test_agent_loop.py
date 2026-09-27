@@ -1,5 +1,5 @@
 import asyncio
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
 
 import pytest
 
@@ -7,6 +7,8 @@ from minimal_harness.agent_loop import run_agent_loop
 from minimal_harness.types import (
     AgentMessage,
     AssistantMessage,
+    AssistantStreamEnd,
+    AssistantStreamEvent,
     CancellationToken,
     ModelFormatError,
     TextContent,
@@ -287,14 +289,14 @@ async def test_cancellation_observed_after_model_return_prevents_tool_start() ->
     call = ToolCall(id="call-1", name="dangerous", arguments={})
 
     class CancellingModel:
-        async def query(
+        async def stream(
             self,
             messages: Sequence[AgentMessage],
             signal: CancellationToken | None = None,
-        ) -> AssistantMessage:
+        ) -> AsyncIterator[AssistantStreamEvent]:
             del messages, signal
             token.cancel()
-            return tool_request(call)
+            yield AssistantStreamEnd(message=tool_request(call))
 
     tools = ScriptedToolExecutor([ToolExecutionResult(content="must not run")])
 

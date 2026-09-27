@@ -33,7 +33,7 @@
 
 | 部分 | 学习目标 | 工程目标 | 特别推荐 | 去重项目数 |
 |---|---|---|---|---:|
-| Harness | mini-swe-agent、Tau、pi | pi、Maka 局部 | DSH：插件生命周期 | 5 |
+| Harness | mini-swe-agent、Tau、pi | pi、Maka、DSH 局部 | DSH：流式 attempt／插件生命周期 | 5 |
 | Memory | memU、LangMem | Mem0、Hindsight | — | 4 |
 | Sandbox | srt、Gondolin | Gondolin、OpenSandbox | Codex：路径与权限策略 | 4 |
 | Observability & Evaluation | OpenInference、Inspect AI | Opik、Harbor | OrcaReplay：回放与分叉 | 5 |
@@ -105,6 +105,12 @@
 读 [agent-run-recovery.ts](https://github.com/apache/maka/blob/main/packages/runtime/src/agent-run-recovery.ts)、[恢复测试](https://github.com/apache/maka/blob/main/packages/runtime/src/__tests__/agent-run-recovery.test.ts)。
 
 **实践：**在工具执行前、执行成功后、结果持久化前分别终止进程；恢复后区分已完成、未执行、结果未知，对未知副作用先核对。
+
+#### DSH：统一流、组装与 attempt settlement
+
+只读 `packages/llm/llm/src/types.ts` 的 `StreamChunk`、`assembler.ts`，以及 `packages/core/agent-loop/src/assistant-stream.ts` 和 `agent.ts` 的模型流 settlement 路径。学习 Adapter 只翻译 Provider 私有协议、Core 统一组装消息，以及成功消息、失败 attempt 和安全中断消息的区别。
+
+**实践：**阶段 2 把当前 `AssistantTextDelta`／`AssistantStreamEnd` 演进为最小 canonical stream；第一版只包含 text、tool call、usage 和 finish。Provider 私有但不影响 Agent 决策的数据放入带 `provider` 与 `schema_version` 的 opaque replay state。Core 通过统一 Assembler 生成 `AssistantMessage`，再以稳定 `attempt_id` settlement 到 EventStore；UI update 不作为恢复事件持久化。
 
 ### 特别推荐：DSH——插件生命周期
 
@@ -325,14 +331,16 @@
 | 阶段 | 参考与工作 | 可执行验收 |
 |---|---|---|
 | 1. 最小循环 | mini-swe-agent、Tau（Python 对照）、pi（主参考）；微型实现只含核心类型、FakeModel、FakeTool、约 100 行 AgentLoop 及测试 | 替换第二套假 ModelAdapter 和假 ToolExecutor 后，正常完成、工具失败、连续格式错误达到阈值、预算耗尽四条路径测试全部通过；取消后在设定超时内退出且不再追加执行事件 |
-| 2. 持久化与恢复 | pi、Maka；冻结事件 v1 前提前核对 OpenInference 的关联标识及 OrcaReplay 的 run／parent_run／divergence 需求 | 在工具执行前、执行成功后、结果持久化前三个边界注入崩溃；重启后分别判为未执行、结果未知、已完成，结果未知的有副作用工具不会自动重试；旧版事件 fixture 可迁移，trace／录制数据只通过稳定 ID 或载荷引用关联 |
+| 2. 持久化与恢复 | pi、Maka、DSH 流式 attempt；先冻结最小 canonical stream、Core Assembler 与 attempt settlement，再核对 OpenInference 关联标识及 OrcaReplay run 血缘 | 不同假 Provider 映射到同一 canonical chunk 后生成相同消息；取消时只提交安全 block，半截 tool call 不进入 transcript；在工具执行前、执行成功后、结果持久化前三个边界注入崩溃，重启后分别判为未执行、结果未知、已完成；结果未知的有副作用工具不会自动重试；旧版事件 fixture 可迁移，trace／录制数据只通过稳定 ID 或载荷引用关联 |
 | 3. 观测与基础评测 | OpenInference、Inspect；先使用假工具、良性任务或一次性容器 | 20–30 个固定任务可重复运行并保存 baseline；并发运行的 span 以 `run_id`、`tool_call_id` 正确归属，取消和异常均结束 span；关闭或故障 exporter 后四条阶段 1 路径结果不变 |
 | 4. 执行隔离 | srt、Gondolin | 同一阶段 3 任务集切换到一个隔离后端后，确定性结果无非预期变化；测试证明超时和取消能终止子进程、测试目录外写入被拒绝、默认网络策略生效、运行结束后资源被清理 |
 | 5. 工程闭环 | Opik、Harbor；服务化时看 OpenSandbox | 至少一个真实失败样本加入回归集并在 CI 中稳定复现；独立 verifier 能区分环境失败、Agent 失败和验证器失败；创建失败、客户端掉线或任务过期后资源最终回收 |
 | 6. 专项能力 | 有明确需求时二选一：OrcaReplay 或 DSH | 回放方案能报告无法匹配与 divergence，且分叉保留 parent run；或插件卸载测试证明工具、监听器、后台任务三者全部释放。无需求时明确跳过，不阻塞阶段 7 |
 | 7. 长期记忆 | memU、LangMem；工程后端择一 | 在阶段 3 固定任务的记忆子集上，对比无记忆与记忆版本；实验前写明成功率、过时引用、费用和延迟阈值，结果至少满足预先定义的收益条件；新增、纠正、删除、过期、用户／项目隔离测试全部通过 |
 
-第一版范围：Python 3.12+ CLI、单 Agent、本地状态、OpenAI-compatible Chat Completions、一个隔离后端。核心保留 ModelAdapter、ToolExecutor、AgentLoop、EventStore、ContextBuilder、取消与预算控制；memory、exporter、评测 adapter 按需接入。外部模型协议只是首个 adapter，不是核心消息模型。
+第一版范围：Python 3.12+ CLI、单 Agent、本地状态、OpenAI-compatible Chat Completions、一个隔离后端。核心保留 ModelAdapter、最小 canonical stream、Core Assembler、ToolExecutor、AgentLoop、EventStore、ContextBuilder、取消与预算控制；memory、exporter、评测 adapter 按需接入。外部模型协议只是首个 adapter，不是核心消息模型。
+
+流式边界采用折中方案：Provider Adapter 只把私有协议翻译为 canonical chunk；Core Assembler 统一构造 `AssistantMessage` 并决定安全取消边界；EventStore 记录 attempt settlement，不持久化 UI update。只有影响 Agent 行为、恢复或评测的字段进入 canonical 协议；Provider 私有的 response id、签名等通过带归属与版本的 opaque replay state 保存，Core 不解释其内容。第一版不为尚未出现的图片、音频、citation 等能力扩展公共协议。
 
 事件日志负责恢复，trace 负责诊断，长期记忆负责跨任务知识。每读一个模块，留下一个实现、测试或实验结论。
 

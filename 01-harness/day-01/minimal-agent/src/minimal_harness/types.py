@@ -1,13 +1,9 @@
-"""第一关：在这里手写核心类型与接口。
+"""Minimal core message, streaming, model, and tool contracts.
 
-需要定义：
-JSONValue、TextContent、ToolCall、UserMessage、AssistantMessage、
-ToolExecutionResult、ToolResultMessage、AgentMessage、ModelAdapter、ToolExecutor。
-
-约束：禁止使用 Any；不要引用任何模型厂商或参考项目的类型。
+The core remains provider-neutral and intentionally avoids ``Any``.
 """
 
-from collections.abc import Mapping, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Literal, Protocol
@@ -91,6 +87,21 @@ class AssistantMessage:
 
 
 @dataclass(frozen=True, slots=True)
+class AssistantTextDelta:
+    delta: str
+    type: Literal["text_delta"] = field(default="text_delta", init=False)
+
+
+@dataclass(frozen=True, slots=True)
+class AssistantStreamEnd:
+    message: AssistantMessage
+    type: Literal["stream_end"] = field(default="stream_end", init=False)
+
+
+type AssistantStreamEvent = AssistantTextDelta | AssistantStreamEnd
+
+
+@dataclass(frozen=True, slots=True)
 class ToolExecutionResult:
     content: str
     details: JSONValue = None
@@ -121,9 +132,9 @@ class CancellationToken(Protocol):
 
 
 class ModelAdapter(Protocol):
-    async def query(
+    def stream(
         self, messages: Sequence[AgentMessage], signal: CancellationToken | None = None
-    ) -> AssistantMessage: ...
+    ) -> AsyncIterator[AssistantStreamEvent]: ...
 
 
 class ToolExecutor(Protocol):
