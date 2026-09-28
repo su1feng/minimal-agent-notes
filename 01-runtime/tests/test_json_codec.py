@@ -4,7 +4,7 @@ from typing import cast
 
 import pytest
 
-from minimal_harness.types import deserialize_json, freeze_json, serialize_json
+from src.types import deserialize_json, freeze_json, serialize_json
 
 
 @pytest.mark.parametrize("value", [math.nan, math.inf, -math.inf])

@@ -3,8 +3,8 @@
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, field
 
-from minimal_harness.model_stream import FinishChunk, ModelStreamChunk, TextChunk, ToolCallChunk
-from minimal_harness.types import (
+from src.model_stream import FinishChunk, ModelStreamChunk, TextChunk, ToolCallChunk
+from src.types import (
     AgentMessage,
     AssistantMessage,
     CancellationToken,

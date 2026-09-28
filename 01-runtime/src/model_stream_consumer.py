@@ -2,9 +2,9 @@
 
 from collections.abc import AsyncIterator
 
-from minimal_harness.assistant_message_assembler import AssistantMessageAssembler
-from minimal_harness.model_stream import ModelStreamChunk
-from minimal_harness.types import AssistantMessage
+from .assistant_message_assembler import AssistantMessageAssembler
+from .model_stream import ModelStreamChunk
+from .types import AssistantMessage
 
 
 async def assemble_model_stream(

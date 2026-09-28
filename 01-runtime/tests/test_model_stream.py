@@ -2,15 +2,15 @@ from dataclasses import FrozenInstanceError, dataclass
 
 import pytest
 
-from minimal_harness.assistant_message_assembler import AssistantMessageAssembler
-from minimal_harness.model_stream import (
+from src.assistant_message_assembler import AssistantMessageAssembler
+from src.model_stream import (
     FinishChunk,
     ProviderReplayState,
     TextChunk,
     ToolCallChunk,
     UsageChunk,
 )
-from minimal_harness.types import AssistantMessage, TextContent, ToolCall
+from src.types import AssistantMessage, TextContent, ToolCall
 
 
 def test_model_stream_chunks_have_fixed_discriminators_and_preserve_data() -> None:

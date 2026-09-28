@@ -1,9 +1,9 @@
 import pytest
 
-from minimal_harness.assistant_attempt import finalize_attempt
-from minimal_harness.assistant_message_assembler import AssistantMessageAssembler
-from minimal_harness.model_stream import FinishChunk, TextChunk, ToolCallChunk
-from minimal_harness.types import AssistantMessage, TextContent, ToolCall
+from src.assistant_attempt import finalize_attempt
+from src.assistant_message_assembler import AssistantMessageAssembler
+from src.model_stream import FinishChunk, TextChunk, ToolCallChunk
+from src.types import AssistantMessage, TextContent, ToolCall
 
 
 def test_completed_attempt_contains_evidence_and_a_formal_message() -> None:

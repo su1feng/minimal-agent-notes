@@ -2,6 +2,7 @@
 
 The core remains provider-neutral and intentionally avoids ``Any``.
 """
+
 import json
 import math
 from collections.abc import AsyncIterator, Mapping, Sequence
@@ -10,10 +11,11 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal, NoReturn, Protocol
 
 if TYPE_CHECKING:
-    from minimal_harness.model_stream import ModelStreamChunk
+    from .model_stream import ModelStreamChunk
 
 type JSONPrimitive = None | bool | int | float | str
 type JSONValue = JSONPrimitive | tuple[JSONValue, ...] | Mapping[str, JSONValue]
+
 
 # Freeze tool-call parameters and results before storing them in history.
 def freeze_json(value: object) -> JSONValue:
@@ -51,9 +53,11 @@ def _freeze_json(value: object, ancestors: set[int]) -> JSONValue:
     finally:
         ancestors.remove(identity)
 
+
 #
 def serialize_json(value: JSONValue) -> str:
     return json.dumps(_to_json_compatible(value), allow_nan=False, separators=(",", ":"))
+
 
 def _to_json_compatible(value: JSONValue) -> object:
     if isinstance(value, tuple):
@@ -62,6 +66,7 @@ def _to_json_compatible(value: JSONValue) -> object:
         return {key: _to_json_compatible(item) for key, item in value.items()}
     return value
 
+
 def deserialize_json(encoded: str) -> JSONValue:
     try:
         parsed: object = json.loads(encoded, parse_constant=_reject_non_finite_json_constant)
@@ -69,8 +74,10 @@ def deserialize_json(encoded: str) -> JSONValue:
         raise ValueError("Invalid JSON") from error
     return freeze_json(parsed)
 
+
 def _reject_non_finite_json_constant(value: str) -> NoReturn:
     raise ValueError(f"JSON contains non-finite number: {value}")
+
 
 @dataclass(frozen=True, slots=True)
 class TextContent:

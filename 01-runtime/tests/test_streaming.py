@@ -6,8 +6,8 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from minimal_harness.agent_loop import run_agent_loop
-from minimal_harness.events import (
+from src.agent_loop import run_agent_loop
+from src.events import (
     AgentEndEvent,
     AgentEvent,
     AgentStartEvent,
@@ -16,8 +16,8 @@ from minimal_harness.events import (
     MessageStartEvent,
     MessageUpdateEvent,
 )
-from minimal_harness.model_stream import FinishChunk, ModelStreamChunk, TextChunk
-from minimal_harness.types import (
+from src.model_stream import FinishChunk, ModelStreamChunk, TextChunk
+from src.types import (
     AgentMessage,
     AssistantMessage,
     CancellationToken,

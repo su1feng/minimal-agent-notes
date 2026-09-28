@@ -1,6 +1,6 @@
 """Assemble a provider-neutral model stream into an assistant message."""
 
-from minimal_harness.model_stream import (
+from .model_stream import (
     FinishChunk,
     ModelStreamChunk,
     ProviderReplayState,
@@ -8,7 +8,7 @@ from minimal_harness.model_stream import (
     ToolCallChunk,
     UsageChunk,
 )
-from minimal_harness.types import AssistantMessage, TextContent, ToolCall
+from .types import AssistantMessage, TextContent, ToolCall
 
 
 class AssistantMessageAssembler:
@@ -71,7 +71,7 @@ class AssistantMessageAssembler:
         return AssistantMessage(
             content=tuple(self._content),
             stop_reason=self._finish.stop_reason,
-            error_message=self._finish.error_message
+            error_message=self._finish.error_message,
         )
 
     def _append_text(self, text: str) -> None:

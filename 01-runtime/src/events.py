@@ -3,7 +3,7 @@
 from dataclasses import dataclass, field
 from typing import Literal, Protocol
 
-from minimal_harness.types import AgentMessage, ToolCall, ToolExecutionResult
+from .types import AgentMessage, ToolCall, ToolExecutionResult
 
 
 @dataclass(frozen=True, slots=True)

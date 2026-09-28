@@ -1,10 +1,10 @@
-"""Minimal provider/tool loop with Day 02 events and streaming support."""
+"""Minimal provider/tool loop with events and streaming support."""
 
 import asyncio
 from collections.abc import AsyncIterator, Sequence
 
-from minimal_harness.assistant_message_assembler import AssistantMessageAssembler
-from minimal_harness.events import (
+from .assistant_message_assembler import AssistantMessageAssembler
+from .events import (
     AgentEndEvent,
     AgentEvent,
     AgentEventSink,
@@ -16,8 +16,8 @@ from minimal_harness.events import (
     ToolExecutionEndEvent,
     ToolExecutionStartEvent,
 )
-from minimal_harness.model_stream import ModelStreamChunk, TextChunk
-from minimal_harness.types import (
+from .model_stream import ModelStreamChunk, TextChunk
+from .types import (
     AgentMessage,
     AssistantMessage,
     CancellationToken,
@@ -152,7 +152,7 @@ async def _stream_assistant_response(
                         MessageStartEvent(message=AssistantDraft(text="")),
                     )
                     started = True
-                text +=chunk.text
+                text += chunk.text
                 await _emit(
                     event_sink,
                     MessageUpdateEvent(

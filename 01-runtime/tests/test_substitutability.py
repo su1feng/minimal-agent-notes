@@ -1,7 +1,7 @@
 import pytest
 
-from minimal_harness.agent_loop import run_agent_loop
-from minimal_harness.types import (
+from src.agent_loop import run_agent_loop
+from src.types import (
     AssistantMessage,
     ModelAdapter,
     TextContent,

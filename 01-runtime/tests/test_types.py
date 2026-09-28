@@ -4,7 +4,7 @@ from typing import cast
 
 import pytest
 
-from minimal_harness.types import (
+from src.types import (
     AssistantMessage,
     JSONValue,
     TextContent,

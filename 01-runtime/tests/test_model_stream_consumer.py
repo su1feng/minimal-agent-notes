@@ -2,9 +2,9 @@ from collections.abc import AsyncIterator
 
 import pytest
 
-from minimal_harness.model_stream import FinishChunk, ModelStreamChunk, TextChunk
-from minimal_harness.model_stream_consumer import assemble_model_stream
-from minimal_harness.types import AssistantMessage, TextContent
+from src.model_stream import FinishChunk, ModelStreamChunk, TextChunk
+from src.model_stream_consumer import assemble_model_stream
+from src.types import AssistantMessage, TextContent
 
 
 async def chunks() -> AsyncIterator[ModelStreamChunk]:

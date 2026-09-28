@@ -3,7 +3,7 @@
 from dataclasses import dataclass, field
 from typing import Literal
 
-from minimal_harness.types import JSONValue, StopReason, ToolCall, freeze_json
+from .types import JSONValue, StopReason, ToolCall, freeze_json
 
 
 @dataclass(frozen=True, slots=True)
@@ -24,6 +24,7 @@ class UsageChunk:
     output_tokens: int
     type: Literal["usage"] = field(default="usage", init=False)
 
+
 @dataclass(frozen=True, slots=True)
 class ProviderReplayState:
     provider: str
@@ -42,9 +43,4 @@ class FinishChunk:
     replay_state: ProviderReplayState | None = None
 
 
-type ModelStreamChunk = (
-    TextChunk
-    | ToolCallChunk
-    | UsageChunk
-    | FinishChunk
-)
+type ModelStreamChunk = TextChunk | ToolCallChunk | UsageChunk | FinishChunk

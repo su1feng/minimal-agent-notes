@@ -1,7 +1,7 @@
 import pytest
 
-from minimal_harness.model_stream import FinishChunk, TextChunk
-from minimal_harness.types import (
+from src.model_stream import FinishChunk, TextChunk
+from src.types import (
     AgentMessage,
     AssistantMessage,
     ModelAdapter,

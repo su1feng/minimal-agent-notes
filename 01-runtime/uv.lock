@@ -190,9 +190,9 @@ wheels = [
 ]
 
 [[package]]
-name = "minimal-harness-day-01"
+name = "minimal-agent-runtime"
 version = "0.0.0"
-source = { editable = "." }
+source = { virtual = "." }
 
 [package.dev-dependencies]
 dev = [
