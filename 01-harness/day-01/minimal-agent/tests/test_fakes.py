@@ -1,9 +1,9 @@
 import pytest
 
+from minimal_harness.model_stream import FinishChunk, TextChunk
 from minimal_harness.types import (
     AgentMessage,
     AssistantMessage,
-    AssistantStreamEnd,
     ModelAdapter,
     TextContent,
     ToolCall,
@@ -25,9 +25,15 @@ async def test_scripted_model_returns_outcomes_in_order_and_records_snapshots() 
     model = ScriptedModel([first, second])
     history: list[AgentMessage] = [UserMessage(content="hello")]
 
-    assert [event async for event in model.stream(history)] == [AssistantStreamEnd(message=first)]
+    assert [event async for event in model.stream(history)] == [
+        TextChunk(text="first"),
+        FinishChunk(stop_reason="stop"),
+    ]
     history.append(first)
-    assert [event async for event in model.stream(history)] == [AssistantStreamEnd(message=second)]
+    assert [event async for event in model.stream(history)] == [
+        TextChunk(text="second"),
+        FinishChunk(stop_reason="stop"),
+    ]
 
     assert model.calls == [
         (UserMessage(content="hello"),),

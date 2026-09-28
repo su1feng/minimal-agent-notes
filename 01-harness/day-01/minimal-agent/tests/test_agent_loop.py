@@ -4,11 +4,10 @@ from collections.abc import AsyncIterator, Sequence
 import pytest
 
 from minimal_harness.agent_loop import run_agent_loop
+from minimal_harness.model_stream import ModelStreamChunk, ToolCallChunk
 from minimal_harness.types import (
     AgentMessage,
     AssistantMessage,
-    AssistantStreamEnd,
-    AssistantStreamEvent,
     CancellationToken,
     ModelFormatError,
     TextContent,
@@ -102,7 +101,7 @@ async def test_preserves_an_error_result_and_gives_the_model_a_chance_to_recover
     assert isinstance(recorded, ToolResultMessage)
     assert recorded.is_error is True
     assert recorded.content == "file not found"
-    assert result[-1] is recovered
+    assert result[-1] == recovered
     assert len(model.calls) == 2
 
 
@@ -126,7 +125,7 @@ async def test_converts_a_tool_exception_into_an_error_result_and_continues() ->
     assert recorded.is_error is True
     assert recorded.content == "boom"
     assert recorded.details == {"exception_type": "RuntimeError"}
-    assert result[-1] is recovered
+    assert result[-1] == recovered
 
 
 @pytest.mark.asyncio
@@ -154,25 +153,35 @@ async def test_executes_multiple_tool_calls_in_source_order() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("stop_reason", ["error", "aborted"])
-async def test_error_and_aborted_assistant_messages_are_hard_exits(stop_reason: str) -> None:
+async def test_model_error_does_not_commit_a_message_or_execute_its_tool_call() -> None:
     initial = (UserMessage(content="run"),)
     call = ToolCall(id="call-1", name="dangerous", arguments={})
     terminal = AssistantMessage(
         content=(call,),
-        stop_reason=stop_reason,  # type: ignore[arg-type]
-        error_message=stop_reason,
+        stop_reason="error",
+        error_message="provider failed",
     )
     model = ScriptedModel([terminal])
     tools = ScriptedToolExecutor([ToolExecutionResult(content="must not run")])
 
-    result = await run_agent_loop(
-        model=model,
-        tool_executor=tools,
-        initial_messages=initial,
-    )
+    with pytest.raises(RuntimeError, match="provider failed"):
+        await run_agent_loop(model=model, tool_executor=tools, initial_messages=initial)
 
-    assert result == (*initial, terminal)
+    assert tools.calls == []
+    assert len(model.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_aborted_response_does_not_execute_its_tool_call() -> None:
+    initial = (UserMessage(content="run"),)
+    call = ToolCall(id="call-1", name="dangerous", arguments={})
+    terminal = AssistantMessage(content=(call,), stop_reason="aborted")
+    model = ScriptedModel([terminal])
+    tools = ScriptedToolExecutor([ToolExecutionResult(content="must not run")])
+
+    with pytest.raises(asyncio.CancelledError):
+        await run_agent_loop(model=model, tool_executor=tools, initial_messages=initial)
+
     assert tools.calls == []
     assert len(model.calls) == 1
 
@@ -293,10 +302,10 @@ async def test_cancellation_observed_after_model_return_prevents_tool_start() ->
             self,
             messages: Sequence[AgentMessage],
             signal: CancellationToken | None = None,
-        ) -> AsyncIterator[AssistantStreamEvent]:
+        ) -> AsyncIterator[ModelStreamChunk]:
             del messages, signal
             token.cancel()
-            yield AssistantStreamEnd(message=tool_request(call))
+            yield ToolCallChunk(tool_call=call)
 
     tools = ScriptedToolExecutor([ToolExecutionResult(content="must not run")])
 
@@ -401,7 +410,7 @@ async def test_successful_model_turn_resets_the_consecutive_format_error_counter
         max_consecutive_format_errors=2,
     )
 
-    assert result[-1] is final
+    assert result[-1] == final
     assert second_feedback in result
     assert not any(
         isinstance(message, AssistantMessage) and message.error_message == "RepeatedFormatError"

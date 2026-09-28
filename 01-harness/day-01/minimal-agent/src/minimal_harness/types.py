@@ -2,39 +2,75 @@
 
 The core remains provider-neutral and intentionally avoids ``Any``.
 """
-
+import json
+import math
 from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Literal, Protocol
+from typing import TYPE_CHECKING, Literal, NoReturn, Protocol
+
+if TYPE_CHECKING:
+    from minimal_harness.model_stream import ModelStreamChunk
 
 type JSONPrimitive = None | bool | int | float | str
 type JSONValue = JSONPrimitive | tuple[JSONValue, ...] | Mapping[str, JSONValue]
 
-
+# Freeze tool-call parameters and results before storing them in history.
 def freeze_json(value: object) -> JSONValue:
-    if value is None or isinstance(
-        value,
-        (bool, int, float, str),
-    ):
+    return _freeze_json(value, ancestors=set())
+
+
+def _freeze_json(value: object, ancestors: set[int]) -> JSONValue:
+    if value is None or isinstance(value, (bool, int, str)):
         return value
 
-    if isinstance(value, (list, tuple)):
-        return tuple(freeze_json(item) for item in value)
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise TypeError("JSON numbers must be finite")
+        return value
 
-    if isinstance(value, Mapping):
+    if not isinstance(value, (list, tuple, Mapping)):
+        raise TypeError(f"Unsupported JSON value: {type(value).__name__}")
+
+    identity = id(value)
+    if identity in ancestors:
+        raise TypeError("Circular JSON value is not supported")
+
+    ancestors.add(identity)
+    try:
+        if isinstance(value, (list, tuple)):
+            return tuple(_freeze_json(item, ancestors) for item in value)
+
         copied: dict[str, JSONValue] = {}
-
         for key, item in value.items():
             if not isinstance(key, str):
                 raise TypeError("JSON object keys must be strings")
-
-            copied[key] = freeze_json(item)
+            copied[key] = _freeze_json(item, ancestors)
 
         return MappingProxyType(copied)
+    finally:
+        ancestors.remove(identity)
 
-    raise TypeError(f"Unsupported JSON value: {type(value).__name__}")
+#
+def serialize_json(value: JSONValue) -> str:
+    return json.dumps(_to_json_compatible(value), allow_nan=False, separators=(",", ":"))
 
+def _to_json_compatible(value: JSONValue) -> object:
+    if isinstance(value, tuple):
+        return [_to_json_compatible(item) for item in value]
+    if isinstance(value, Mapping):
+        return {key: _to_json_compatible(item) for key, item in value.items()}
+    return value
+
+def deserialize_json(encoded: str) -> JSONValue:
+    try:
+        parsed: object = json.loads(encoded, parse_constant=_reject_non_finite_json_constant)
+    except json.JSONDecodeError as error:
+        raise ValueError("Invalid JSON") from error
+    return freeze_json(parsed)
+
+def _reject_non_finite_json_constant(value: str) -> NoReturn:
+    raise ValueError(f"JSON contains non-finite number: {value}")
 
 @dataclass(frozen=True, slots=True)
 class TextContent:
@@ -87,21 +123,6 @@ class AssistantMessage:
 
 
 @dataclass(frozen=True, slots=True)
-class AssistantTextDelta:
-    delta: str
-    type: Literal["text_delta"] = field(default="text_delta", init=False)
-
-
-@dataclass(frozen=True, slots=True)
-class AssistantStreamEnd:
-    message: AssistantMessage
-    type: Literal["stream_end"] = field(default="stream_end", init=False)
-
-
-type AssistantStreamEvent = AssistantTextDelta | AssistantStreamEnd
-
-
-@dataclass(frozen=True, slots=True)
 class ToolExecutionResult:
     content: str
     details: JSONValue = None
@@ -134,7 +155,7 @@ class CancellationToken(Protocol):
 class ModelAdapter(Protocol):
     def stream(
         self, messages: Sequence[AgentMessage], signal: CancellationToken | None = None
-    ) -> AsyncIterator[AssistantStreamEvent]: ...
+    ) -> AsyncIterator["ModelStreamChunk"]: ...
 
 
 class ToolExecutor(Protocol):

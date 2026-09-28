@@ -16,12 +16,10 @@ from minimal_harness.events import (
     MessageStartEvent,
     MessageUpdateEvent,
 )
+from minimal_harness.model_stream import FinishChunk, ModelStreamChunk, TextChunk
 from minimal_harness.types import (
     AgentMessage,
     AssistantMessage,
-    AssistantStreamEnd,
-    AssistantStreamEvent,
-    AssistantTextDelta,
     CancellationToken,
     TextContent,
     UserMessage,
@@ -37,7 +35,7 @@ class RecordingEventSink:
         self.events.append(event)
 
 
-type StreamOutcome = AssistantStreamEvent | BaseException
+type StreamOutcome = ModelStreamChunk | BaseException
 
 
 @dataclass(slots=True)
@@ -51,7 +49,7 @@ class ScriptedStreamingModel:
         self,
         messages: Sequence[AgentMessage],
         signal: CancellationToken | None = None,
-    ) -> AsyncIterator[AssistantStreamEvent]:
+    ) -> AsyncIterator[ModelStreamChunk]:
         del messages, signal
         for outcome in self.outcomes:
             if isinstance(outcome, BaseException):
@@ -69,9 +67,9 @@ async def test_streaming_drafts_are_events_but_only_the_final_message_enters_his
     final = answer("Hello")
     model = ScriptedStreamingModel(
         [
-            AssistantTextDelta(delta="Hel"),
-            AssistantTextDelta(delta="lo"),
-            AssistantStreamEnd(message=final),
+            TextChunk(text="Hel"),
+            TextChunk(text="lo"),
+            FinishChunk(stop_reason="stop"),
         ]
     )
     sink = RecordingEventSink()
@@ -118,10 +116,10 @@ class BlockingStreamingModel:
         self,
         messages: Sequence[AgentMessage],
         signal: CancellationToken | None = None,
-    ) -> AsyncIterator[AssistantStreamEvent]:
+    ) -> AsyncIterator[ModelStreamChunk]:
         del messages
         assert isinstance(signal, NotifyingCancellationToken)
-        yield AssistantTextDelta(delta="partial")
+        yield TextChunk(text="partial")
         self.delta_sent.set()
         await signal.wait_cancelled()
         raise asyncio.CancelledError
@@ -169,9 +167,9 @@ async def test_stream_cancellation_commits_one_aborted_message_then_propagates()
 @pytest.mark.asyncio
 async def test_stream_without_a_terminal_message_is_a_contract_error() -> None:
     sink = RecordingEventSink()
-    model = ScriptedStreamingModel([AssistantTextDelta(delta="unfinished")])
+    model = ScriptedStreamingModel([TextChunk(text="unfinished")])
 
-    with pytest.raises(ValueError, match="stream ended without an AssistantStreamEnd"):
+    with pytest.raises(RuntimeError, match="before finish"):
         await run_agent_loop(
             model=model,
             tool_executor=ScriptedToolExecutor([]),

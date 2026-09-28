@@ -3,12 +3,12 @@
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, field
 
+from minimal_harness.model_stream import FinishChunk, ModelStreamChunk, TextChunk, ToolCallChunk
 from minimal_harness.types import (
     AgentMessage,
     AssistantMessage,
-    AssistantStreamEnd,
-    AssistantStreamEvent,
     CancellationToken,
+    TextContent,
     ToolCall,
     ToolExecutionResult,
 )
@@ -46,13 +46,22 @@ class ScriptedModel:
         self,
         messages: Sequence[AgentMessage],
         signal: CancellationToken | None = None,
-    ) -> AsyncIterator[AssistantStreamEvent]:
+    ) -> AsyncIterator[ModelStreamChunk]:
         self.calls.append(tuple(messages))
         self.signals.append(signal)
         outcome = self._next_outcome()
         if isinstance(outcome, Exception):
             raise outcome
-        yield AssistantStreamEnd(message=outcome)
+        for block in outcome.content:
+            if isinstance(block, TextContent):
+                yield TextChunk(text=block.text)
+            else:
+                yield ToolCallChunk(tool_call=block)
+
+        yield FinishChunk(
+            stop_reason=outcome.stop_reason,
+            error_message=outcome.error_message,
+        )
 
     def _next_outcome(self) -> ModelOutcome:
         if self._cursor >= len(self.outcomes):

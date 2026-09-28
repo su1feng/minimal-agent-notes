@@ -10,8 +10,10 @@ from minimal_harness.events import (
     AgentEndEvent,
     AgentEvent,
     AgentStartEvent,
+    AssistantDraft,
     MessageEndEvent,
     MessageStartEvent,
+    MessageUpdateEvent,
     ToolExecutionEndEvent,
     ToolExecutionStartEvent,
 )
@@ -60,7 +62,8 @@ async def test_emits_a_closed_lifecycle_for_a_direct_answer() -> None:
 
     assert sink.events == [
         AgentStartEvent(),
-        MessageStartEvent(message=final),
+        MessageStartEvent(message=AssistantDraft(text="")),
+        MessageUpdateEvent(message=AssistantDraft(text="hi"), delta="hi"),
         MessageEndEvent(message=final),
         AgentEndEvent(messages=result),
     ]
@@ -100,7 +103,8 @@ async def test_emits_tool_events_before_the_corresponding_result_message() -> No
         ToolExecutionEndEvent(tool_call=call, result=execution_result),
         MessageStartEvent(message=result_message),
         MessageEndEvent(message=result_message),
-        MessageStartEvent(message=final),
+        MessageStartEvent(message=AssistantDraft(text="")),
+        MessageUpdateEvent(message=AssistantDraft(text="done"), delta="done"),
         MessageEndEvent(message=final),
         AgentEndEvent(messages=result),
     ]
@@ -248,3 +252,35 @@ async def test_step_limit_error_still_ends_the_lifecycle() -> None:
 
     assert sink.events[-1] == AgentEndEvent(messages=(request, result_message))
     assert sum(isinstance(event, AgentEndEvent) for event in sink.events) == 1
+
+
+@pytest.mark.asyncio
+async def test_model_error_after_tool_result_keeps_prior_messages_without_a_final_answer() -> None:
+    initial = (UserMessage(content="read file"),)
+    call = ToolCall(id="call-1", name="read", arguments={"path": "README.md"})
+    request = tool_request(call)
+    tool_result = ToolExecutionResult(content="file contents")
+    result_message = ToolResultMessage(
+        tool_call_id=call.id,
+        tool_name=call.name,
+        content=tool_result.content,
+    )
+    failed_answer = AssistantMessage(
+        content=(TextContent(text="The file"),),
+        stop_reason="error",
+        error_message="provider disconnected",
+    )
+    model = ScriptedModel([request, failed_answer])
+    sink = RecordingEventSink()
+
+    with pytest.raises(RuntimeError, match="provider disconnected"):
+        await run_agent_loop(
+            model=model,
+            tool_executor=ScriptedToolExecutor([tool_result]),
+            initial_messages=initial,
+            event_sink=sink,
+        )
+
+    assert model.calls[1] == (*initial, request, result_message)
+    assert sink.events[-1] == AgentEndEvent(messages=(*initial, request, result_message))
+    assert MessageEndEvent(message=failed_answer) not in sink.events

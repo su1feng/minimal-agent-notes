@@ -3,13 +3,10 @@
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, field
 
+from minimal_harness.model_stream import FinishChunk, ModelStreamChunk, TextChunk, ToolCallChunk
 from minimal_harness.types import (
     AgentMessage,
-    AssistantMessage,
-    AssistantStreamEnd,
-    AssistantStreamEvent,
     CancellationToken,
-    TextContent,
     ToolCall,
     ToolExecutionResult,
     ToolResultMessage,
@@ -28,19 +25,15 @@ class RuleBasedEchoModel:
         self,
         messages: Sequence[AgentMessage],
         signal: CancellationToken | None = None,
-    ) -> AsyncIterator[AssistantStreamEvent]:
+    ) -> AsyncIterator[ModelStreamChunk]:
         snapshot = tuple(messages)
         self.calls.append(snapshot)
         self.signals.append(signal)
 
         if snapshot and isinstance(snapshot[-1], ToolResultMessage):
             result = snapshot[-1]
-            yield AssistantStreamEnd(
-                message=AssistantMessage(
-                    content=(TextContent(text=f"echo: {result.content}"),),
-                    stop_reason="stop",
-                )
-            )
+            yield TextChunk(text=f"echo: {result.content}")
+            yield FinishChunk(stop_reason="stop")
             return
 
         user_message = next(
@@ -48,27 +41,20 @@ class RuleBasedEchoModel:
             None,
         )
         if user_message is None:
-            yield AssistantStreamEnd(
-                message=AssistantMessage(
-                    content=(),
-                    stop_reason="error",
-                    error_message="No user message found",
-                )
+            yield FinishChunk(
+                stop_reason="error",
+                error_message="No user message found",
             )
             return
 
-        yield AssistantStreamEnd(
-            message=AssistantMessage(
-                content=(
-                    ToolCall(
-                        id="echo-1",
-                        name="echo",
-                        arguments={"text": user_message.content},
-                    ),
-                ),
-                stop_reason="toolUse",
+        yield ToolCallChunk(
+            tool_call=ToolCall(
+                id="echo-1",
+                name="echo",
+                arguments={"text": user_message.content},
             )
         )
+        yield FinishChunk(stop_reason="toolUse")
 
 
 @dataclass(slots=True)

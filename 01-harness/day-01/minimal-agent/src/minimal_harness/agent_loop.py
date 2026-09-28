@@ -3,6 +3,7 @@
 import asyncio
 from collections.abc import AsyncIterator, Sequence
 
+from minimal_harness.assistant_message_assembler import AssistantMessageAssembler
 from minimal_harness.events import (
     AgentEndEvent,
     AgentEvent,
@@ -15,21 +16,22 @@ from minimal_harness.events import (
     ToolExecutionEndEvent,
     ToolExecutionStartEvent,
 )
+from minimal_harness.model_stream import ModelStreamChunk, TextChunk
 from minimal_harness.types import (
     AgentMessage,
     AssistantMessage,
-    AssistantStreamEnd,
-    AssistantStreamEvent,
-    AssistantTextDelta,
     CancellationToken,
     ModelAdapter,
     ModelFormatError,
-    TextContent,
     ToolCall,
     ToolExecutionResult,
     ToolExecutor,
     ToolResultMessage,
 )
+
+
+class ModelRequestError(RuntimeError):
+    """The model request ended in an error."""
 
 
 async def run_agent_loop(
@@ -131,55 +133,57 @@ async def _append_message(
 
 
 async def _stream_assistant_response(
-    stream: AsyncIterator[AssistantStreamEvent],
+    stream: AsyncIterator[ModelStreamChunk],
     messages: list[AgentMessage],
     signal: CancellationToken | None,
     event_sink: AgentEventSink | None,
 ) -> AssistantMessage:
+    assembler = AssistantMessageAssembler()
     text = ""
     started = False
     try:
-        async for stream_event in stream:
+        async for chunk in stream:
             _raise_if_cancelled(signal)
-            if isinstance(stream_event, AssistantTextDelta):
+            assembler.push(chunk)
+            if isinstance(chunk, TextChunk):
                 if not started:
                     await _emit(
                         event_sink,
                         MessageStartEvent(message=AssistantDraft(text="")),
                     )
                     started = True
-                text += stream_event.delta
+                text +=chunk.text
                 await _emit(
                     event_sink,
                     MessageUpdateEvent(
                         message=AssistantDraft(text=text),
-                        delta=stream_event.delta,
+                        delta=chunk.text,
                     ),
                 )
-                continue
+        final = assembler.message()
 
-            if isinstance(stream_event, AssistantStreamEnd):
-                final = stream_event.message
-                if started:
-                    messages.append(final)
-                    await _emit(event_sink, MessageEndEvent(message=final))
-                else:
-                    await _append_message(messages, final, event_sink)
-                return final
+        if final.stop_reason == "error":
+            raise ModelRequestError(final.error_message or "model request failed")
+        if final.stop_reason == "aborted":
+            raise asyncio.CancelledError
 
-        raise ValueError("stream ended without an AssistantStreamEnd")
-    except asyncio.CancelledError:
-        content = (TextContent(text=text),) if text else ()
-        aborted = AssistantMessage(
-            content=content,
-            stop_reason="aborted",
-            error_message="Cancelled",
-        )
         if started:
-            messages.append(aborted)
-            await _emit(event_sink, MessageEndEvent(message=aborted))
+            messages.append(final)
+            await _emit(event_sink, MessageEndEvent(message=final))
         else:
-            await _append_message(messages, aborted, event_sink)
+            await _append_message(messages, final, event_sink)
+
+        return final
+
+    except asyncio.CancelledError:
+        aborted = assembler.interrupted_message()
+
+        if aborted is not None:
+            if started:
+                messages.append(aborted)
+                await _emit(event_sink, MessageEndEvent(message=aborted))
+            else:
+                await _append_message(messages, aborted, event_sink)
         raise
 
 

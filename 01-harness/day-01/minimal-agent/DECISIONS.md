@@ -1,9 +1,9 @@
-# Day 01–02 关键设计决定（阶段 1：最小循环）
+# Day 01–03 关键设计决定（阶段 1 最小循环及阶段 2 流式边界）
 
-范围：本文件记录阶段 1 微型实现（`src/minimal_harness/`）已经生效的设计决定，每条都给出代码位置与测试证据。
-Day 02 已完成生命周期事件层（D1-01）与流式提交边界（D1-02），对应决定见 D-10 与 D-11。
+范围：本文件记录微型实现（`src/minimal_harness/`）已经生效的设计决定，以及阶段 2 已选但尚未落盘的持久化边界。
+Day 02 的生命周期事件与流式提交边界见 D-10、D-11；Day 03 的统一模型流与错误处理见 D-12 至 D-14。
 
-代码基线：本文档与工作区 67 项测试、Ruff、mypy strict 同时通过的状态对应。
+代码基线：Day 03 工作区的 94 项测试、Ruff、mypy strict 均通过。
 
 ---
 
@@ -80,21 +80,28 @@ Day 02 已完成生命周期事件层（D1-01）与流式提交边界（D1-02）
 - **理由**：partial 是随时会变化的运行视图，不能污染可恢复历史；final／aborted 才是稳定事实。
 - **证据**：`tests/test_streaming.py` 覆盖两段 delta 合并、final 单次提交、取消后 aborted 单次提交，以及缺少终止事件的契约错误。
 
-## D-12 ModelAdapter 统一为 stream-only，与 pi／DSH 的单路径契约对齐
+## D-12 ModelAdapter 统一为 ModelStreamChunk 单路径，与 pi／DSH 的流式语义对齐
 
-- **决定**：删除 `AssistantMessage | AsyncIterator[...]` 双返回类型和直接消息分支。所有 ModelAdapter——包括一次性测试替身——都实现同一个 `stream()` 协议；AgentLoop 始终消费事件流并等待 `AssistantStreamEnd`。
+- **决定**：删除 `AssistantMessage | AsyncIterator[...]` 双返回类型和直接消息分支。所有 ModelAdapter——包括一次性测试替身——都实现同一个 `stream()` 协议，输出 `ModelStreamChunk`；AgentLoop 将 chunk 交给 `AssistantMessageAssembler` 并等待 `FinishChunk`。
 - **与 pi 的关系**：pi 的 Agent `StreamFn` 只返回 `AssistantMessageEventStream`，其 `complete()` 也是消费 stream 后取 `result()` 的便利包装。当前实现与它保持相同的单路径 Adapter 形状，但没有复制低层 `context.messages` 尾项替换；partial 仍只存在于运行事件。
-- **与 DSH 的关系**：DSH Adapter 唯一必需方法也是 `stream()`，返回 `AsyncIterable<StreamChunk>`。当前实现与它保持相同的单路径入口，但暂未实现 `AssistantStreamAttempt`、原始 stream、block assembler 和 attempt settlement。
-- **阶段 1 取舍**：内核累积文本 draft，adapter 在 `AssistantStreamEnd` 中给出权威 final，当前不要求二者内容相等。这保持协议最小，但意味着本层暂不负责 reasoning／tool-call delta 的完整组装，也不能独立重放 provider stream。
-- **阶段 2 演进**：EventStore 设计时再引入稳定 `attempt_id`、revision 和 settlement 事件；只持久化 settlement 或原始流引用，不持久化 UI update。需要恢复失败尝试时新增非消息型 attempt record，并区分用户取消、provider 失败与无安全可见内容的取消。
+- **与 DSH 的关系**：DSH Adapter 唯一必需方法也是 `stream()`，返回 `AsyncIterable<StreamChunk>`。当前实现与它保持相同的单路径入口，并已实现最小 `AssistantMessageAssembler`；DSH 的半截 block 组装、原始 stream 压缩及持久化 settlement 仍不在当前实现中。
+- **阶段 2 取舍**：Adapter 先把私有分片组装为完整的 text／tool-call chunk；Core 不处理半截工具参数。文本 chunk 驱动 UI draft，正式消息只在 finish 后由 Assembler 构造。
+- **阶段 2 演进**：`AssistantAttempt`／`AttemptResult` 已覆盖 completed、cancelled、failed 分类，但尚未持久化。EventStore 设计时再引入稳定 `attempt_id`、run 关联与追加事实；不持久化 UI update。
 
 ## D-13 阶段 2 采用 DSH 主干 + pi 局部扩展的流式折中方案
 
-- **决定**：Provider Adapter 只负责把供应商私有协议翻译为最小 canonical chunk；Core Assembler 统一构造 `AssistantMessage`、判断安全取消内容，并通过稳定 `attempt_id` settlement 到 EventStore。
+- **决定**：Provider Adapter 只负责把供应商私有协议翻译为最小 `ModelStreamChunk`；`AssistantMessageAssembler` 统一构造 `AssistantMessage`、判断安全取消内容，并通过稳定 `attempt_id` settlement 到 EventStore。
 - **最小公共协议**：第一版只覆盖 text、tool call、usage 和 finish。只有影响 Agent 控制流、恢复或跨 Provider 评测的字段才能进入 canonical 协议；图片、音频、citation 等没有当前需求时不提前加入。
-- **局部扩展**：Provider 私有但 Core 不需要解释的数据，放入包含 `provider`、`schema_version` 和 JSON `data` 的 opaque replay state。Core 只校验、保存和回传；对应 Adapter 负责解释，避免每个私有字段都扩张公共协议。
+- **局部扩展**：Provider 私有但 Core 不需要解释的数据，放入包含 `provider`、`schema_version` 和 JSON `payload` 的 `ProviderReplayState`。Core 只冻结、保存和回传；对应 Adapter 负责解释，避免每个私有字段都扩张公共协议。
 - **持久化边界**：UI draft/update 是瞬时信号，不直接作为恢复日志；EventStore 记录 attempt start／settlement、正式或安全中断消息，以及按需保存的压缩原始流或引用。失败或无安全内容的 attempt 不伪装成 `AssistantMessage`。
 - **限制**：该方案能在已实现范围内获得 DSH 类似的取消、恢复和观察边界，但不会自动拥有 DSH 全部功能；一旦 Provider 新字段会影响 Agent 行为，就必须显式扩展 canonical 协议和 Core，而不能藏进 opaque metadata。
+
+## D-14 模型请求失败与工具失败分别处理
+
+- **决定**：模型流以 `FinishChunk(stop_reason="error")` 结束时，AgentLoop 在追加正式消息前抛出 `ModelRequestError`；失败的 partial 和工具调用不进入后续模型可见的消息历史。此前已完成的工具调用与工具结果保留。`FinishChunk(stop_reason="aborted")` 走取消路径，只保留安全文本。
+- **工具失败**：工具执行错误仍形成 `is_error=True` 的 `ToolResultMessage`，供下一次模型请求读取；这与模型请求失败不同。
+- **格式错误**：D-07 的 `ModelFormatError` 反馈重试及达到阈值后的终止规则保持不变，不与模型接口报错合并。
+- **证据与遗留**：`tests/test_agent_loop.py`、`tests/test_events.py` 验证失败模型请求不产生正式消息且不执行其工具调用，已有工具结果仍保留；`tests/test_assistant_attempt.py` 验证失败 attempt 不生成消息。AttemptResult 的真实持久化仍由延期项 D3-01 在 EventStore 阶段完成。
 
 ---
 

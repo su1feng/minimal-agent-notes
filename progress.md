@@ -15,7 +15,7 @@
 |---|---:|---|---|
 | 09-26 | 7h | 已完成（跨日） | mini-swe-agent、Tau、pi 核心阅读及最小循环实现全部完成 |
 | 09-27 | 7h | 已完成 | Day 02：完成 Event 层、流式提交边界与取消事件顺序；阶段 1 验收通过 |
-| 09-28 | 7h | 未开始 | — |
+| 09-28 | 7h | 已完成 | Day 03：完成严格 JSON、ModelStreamChunk、Assembler、Provider replay state、attempt 分类及 AgentLoop 接入；模型接口失败不进入消息历史；真实 attempt 持久化转入 EventStore |
 | 09-29 | 7h | 未开始 | — |
 | 09-30 | 7h | 未开始 | — |
 | 10-01 | 7h | 未开始 | — |
@@ -31,7 +31,7 @@
 
 | 当前阶段 | 状态 | 开始日期 | 最近更新 | 下一步 |
 |---|---|---|---|---|
-| 阶段 1：最小循环 | 已完成 | 2026-09-26 | 2026-09-27 | 进入阶段 2：先冻结最小 canonical stream、Core Assembler 与 attempt settlement，再实现 EventStore 和恢复测试 |
+| 阶段 2：持久化与恢复 | 进行中 | 2026-09-28 | 2026-09-28 | 设计并实现 EventStore v1，使 AttemptResult 成为可恢复的追加事实 |
 
 ## 每日收尾规则
 
@@ -50,9 +50,10 @@
 |---|---|---|---|---|---|---|
 | D1-01 | Day 01 | AgentEvent类型、事件sink及取消后的事件顺序 | Day 01限定为消息与最小循环，尚未引入Event层 | 2026-09-27 已完成 | 测试证明生命周期闭合，取消后不再发出新的模型／工具执行事件 | 已完成 |
 | D1-02 | Day 01 | 流式草稿、文本delta和最终不可变AssistantMessage提交边界 | 当前只有一次性FakeModel返回，缺少流式协议 | 2026-09-27 已完成 | 流式测试证明partial不进入正式历史，完成或取消后只提交一个final／aborted消息 | 已完成 |
-| D1-03 | Day 01 | lossless JSON严格校验、循环引用／非有限浮点拒绝及freeze对应的序列化转换 | 属于EventStore持久化边界，不应塞进最小循环 | Day 03（2026-09-28），阶段2开始时 | 循环、NaN／Infinity、非法对象测试；freeze→序列化→读取往返一致 | 待完成 |
+| D1-03 | Day 01 | lossless JSON严格校验、循环引用／非有限浮点拒绝及freeze对应的序列化转换 | 属于EventStore持久化边界，不应塞进最小循环 | 2026-09-28 已完成 | `test_json_codec.py` 证明循环、NaN／Infinity 和非标准数字面量被拒绝，freeze→序列化→读取往返一致 | 已完成 |
 | D1-04 | Day 01 | 用户编辑旧消息时的`parent_id`分支与当前上下文投影 | 依赖EventStore和ContextBuilder | 阶段2持久化与恢复期间 | 原分支保留，新分支不包含旧回复；两条分支均可独立恢复 | 待完成 |
 | D1-05 | Day 01 | CI workflow 首次运行确认 | 需推送到远程后由 GitHub Actions 执行，推送属外部动作 | 2026-09-27 已完成 | workflow `day-01-minimal-agent` 首次运行三步全绿（Ruff／mypy／pytest） | 已完成 |
+| D3-01 | Day 03 | 将 AttemptResult 持久化为带 attempt_id／run_id 的 EventStore 事实，并在恢复时投影 | 当前只有内存中的分类结果；持久化语义应由 EventStore 统一拥有 | EventStore 实现阶段 | 追加、读取、迁移与恢复测试证明 attempt 证据和正式消息正确关联 | 待完成 |
 
 ## 开工清单
 
@@ -129,13 +130,14 @@ Day 01 状态：已完成。三个项目的核心阅读、不可变消息类型�
 
 ## 阶段 2：持久化与恢复
 
-状态：未开始
+状态：进行中
 
-- [ ] 阅读 pi session manager、Maka runtime event 与恢复测试
-- [ ] 阅读 DSH `StreamChunk`、`BlockAssembler`、`AssistantStreamAttempt` 及 settlement 路径
-- [ ] 定义最小 canonical stream：text、tool call、usage、finish；为 Provider replay state 增加归属与 schema version
-- [ ] 实现 Core Assembler，并用两套假 Provider 证明相同 canonical 输入生成相同 `AssistantMessage`
-- [ ] 实现 `attempt_id` 与 settlement；取消只提交安全 block，半截 tool call 不进入 transcript
+- [x] 阅读 pi session manager、Maka runtime event 与恢复测试
+- [x] 阅读 DSH `StreamChunk`、`BlockAssembler`、`AssistantStreamAttempt` 及 settlement 路径
+- [x] 定义最小 canonical stream：text、tool call、usage、finish；为 Provider replay state 增加归属与 schema version
+- [x] 实现 `AssistantMessageAssembler`，并通过固定 ModelStreamChunk 输入生成 `AssistantMessage`
+- [x] 取消只提交安全文本，未完成的工具调用不进入正式消息
+- [ ] 将 `attempt_id` 与 attempt settlement 接入 EventStore
 - [ ] 冻结事件 v1 前核对 OpenInference 关联标识和 OrcaReplay run 血缘
 - [ ] 实现 EventStore、上下文投影和 schema 迁移
 - [ ] 完成三个工具边界的崩溃注入测试
@@ -248,3 +250,15 @@ Day 01 状态：已完成。三个项目的核心阅读、不可变消息类型�
 - Day 02 全量验收通过：Ruff、mypy strict、pytest 全绿（67 passed）；D1-01、D1-02 关闭，阶段 1 完成。
 - 补充并修订 D-12：ModelAdapter 收敛为 stream-only 单路径，与 pi／DSH 的 Adapter 形状对齐；保留“瞬时 draft + final settlement”的最小历史边界，并把 attempt ID、revision、失败尝试记录和多类型 block assembler 延后到阶段 2。
 - 选定阶段 2 流式折中方案：采用 DSH 式“Provider Adapter 翻译 canonical chunk → Core Assembler → attempt settlement”主干，同时通过最小公共协议和带版本的 opaque replay state 保留 pi 式局部 Provider 扩展；当前只同步计划，不扩大 Day 02 实现。
+
+### 2026-09-28
+
+- Day 03 启动：完成 pi `session-manager.ts` 与 Maka `runtime-event.ts`／`agent-run-recovery.ts` 的首轮定向阅读。结论是追加事件事实、上下文投影与 UI／trace 必须分离；恢复只能根据最后一个已持久化事实作保守判定。
+- 为 D1-03 新增 `tests/test_json_codec.py`，固定严格 JSON 持久化边界：拒绝 `NaN`／`Infinity`、直接与间接循环引用；冻结对象可无损编解码且不与调用方保留可变别名；读取端拒绝非标准非有限数字面量。实现 `freeze_json` 路径循环检测、有限数校验、冻结值编码与严格读取后重新冻结。
+- D1-03 验收通过：`tests/test_json_codec.py` 10 passed；Ruff、mypy strict 通过；全套 pytest 77 passed。
+- 完成最小 ModelStreamChunk／AssistantMessageAssembler：冻结输入、保留内容顺序、合并相邻文本、finish 后封口；取消只投影非空文本，不将工具调用写入正式消息。
+- 完成 ProviderReplayState 与 AttemptResult：Provider 私有载荷携带 provider／schema version 且冻结；completed、cancelled、failed 三种 attempt 分类均有测试。两种 Provider 保留不同 replay state 但生成相同模型消息；当前全套 pytest 89 passed。
+- 完成 ModelStreamChunk 主路径接入：ModelAdapter、测试替身与 AgentLoop 统一消费 chunk；文本只驱动 UI draft，Assembler 在 finish 后生成正式消息，取消只投影安全文本。两种 fake Provider 的私有响应经各自翻译后生成相同 AssistantMessage；全套 pytest 90 passed。
+- 将 AttemptResult 的真实持久化登记为 D3-01：在 EventStore 出现前，AttemptResult 只验证分类规则，不伪装成可恢复事实。
+- Day 03 收尾：选择模型接口失败不进入后续模型可见历史、工具执行失败以错误工具结果回填；`finalize_attempt()` 拒绝将错误／中断的模型响应标为 completed。AgentLoop 在模型报错时保留此前已完成的工具调用与结果，不追加失败的 assistant 消息；原有 D-07 格式错误重试规则保持不变。
+- Day 03 验证：全套 pytest 94 passed，Ruff 与 mypy strict 通过。`AttemptResult` 持久化、崩溃恢复和上下文分支投影分别按 D3-01、D1-04 及阶段 2 清单继续推进。
