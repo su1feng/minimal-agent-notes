@@ -15,6 +15,8 @@ def test_completed_attempt_contains_evidence_and_a_formal_message() -> None:
     result = finalize_attempt(
         attempt_id="attempt-1",
         run_id="run-1",
+        turn_id="turn-1",
+        step_id="step-1",
         status="completed",
         chunks=chunks,
         assembler=assembler,
@@ -26,6 +28,8 @@ def test_completed_attempt_contains_evidence_and_a_formal_message() -> None:
     )
     assert result.attempt.attempt_id == "attempt-1"
     assert result.attempt.run_id == "run-1"
+    assert result.attempt.turn_id == "turn-1"
+    assert result.attempt.step_id == "step-1"
     assert result.attempt.status == "completed"
     assert result.attempt.chunks == chunks
 
@@ -40,6 +44,8 @@ def test_cancelled_attempt_only_projects_safe_text_into_its_message() -> None:
     result = finalize_attempt(
         attempt_id="attempt-2",
         run_id="run-1",
+        turn_id="turn-1",
+        step_id="step-1",
         status="cancelled",
         chunks=chunks,
         assembler=assembler,
@@ -62,6 +68,8 @@ def test_failed_attempt_has_evidence_but_no_message() -> None:
     result = finalize_attempt(
         attempt_id="attempt-3",
         run_id="run-1",
+        turn_id="turn-1",
+        step_id="step-1",
         status="failed",
         chunks=chunks,
         assembler=assembler,
@@ -84,6 +92,8 @@ def test_model_error_is_recorded_as_a_failed_attempt_without_a_message() -> None
     result = finalize_attempt(
         attempt_id="attempt-4",
         run_id="run-1",
+        turn_id="turn-1",
+        step_id="step-1",
         status="failed",
         chunks=chunks,
         assembler=assembler,
@@ -104,6 +114,8 @@ def test_model_error_cannot_be_classified_as_a_completed_attempt() -> None:
         finalize_attempt(
             attempt_id="attempt-5",
             run_id="run-1",
+            turn_id="turn-1",
+            step_id="step-1",
             status="completed",
             chunks=chunks,
             assembler=assembler,
@@ -120,6 +132,8 @@ def test_completed_tool_call_is_a_formal_message_for_the_next_model_request() ->
     result = finalize_attempt(
         attempt_id="attempt-6",
         run_id="run-1",
+        turn_id="turn-1",
+        step_id="step-1",
         status="completed",
         chunks=chunks,
         assembler=assembler,

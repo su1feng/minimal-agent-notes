@@ -7,14 +7,21 @@ from dataclasses import dataclass, field
 import pytest
 
 from src.agent_loop import run_agent_loop
+from src.assistant_attempt import AssistantAttempt, AttemptStatus
 from src.events import (
     AgentEndEvent,
     AgentEvent,
     AgentStartEvent,
+    AssistantAttemptEndEvent,
+    AssistantAttemptStartEvent,
     AssistantDraft,
     MessageEndEvent,
     MessageStartEvent,
     MessageUpdateEvent,
+    StepEndEvent,
+    StepStartEvent,
+    TurnEndEvent,
+    TurnStartEvent,
 )
 from src.model_stream import FinishChunk, ModelStreamChunk, TextChunk
 from src.types import (
@@ -24,7 +31,21 @@ from src.types import (
     TextContent,
     UserMessage,
 )
-from tests.fakes import ScriptedToolExecutor
+from tests.fakes import ScriptedToolExecutor, SequentialIdGenerator
+
+RUN_ID = "run-1"
+TURN_ID = "turn-1"
+
+
+def attempt(*, status: AttemptStatus, chunks: tuple[ModelStreamChunk, ...]) -> AssistantAttempt:
+    return AssistantAttempt(
+        attempt_id="attempt-1",
+        run_id=RUN_ID,
+        turn_id=TURN_ID,
+        step_id="step-1",
+        status=status,
+        chunks=chunks,
+    )
 
 
 @dataclass(slots=True)
@@ -79,16 +100,34 @@ async def test_streaming_drafts_are_events_but_only_the_final_message_enters_his
         tool_executor=ScriptedToolExecutor([]),
         initial_messages=initial,
         event_sink=sink,
+        id_generator=SequentialIdGenerator(),
     )
 
     assert result == (*initial, final)
     assert sink.events == [
-        AgentStartEvent(),
+        AgentStartEvent(run_id=RUN_ID),
+        TurnStartEvent(run_id=RUN_ID, turn_id=TURN_ID),
+        StepStartEvent(run_id=RUN_ID, turn_id=TURN_ID, step_id="step-1"),
+        AssistantAttemptStartEvent(
+            attempt_id="attempt-1", run_id=RUN_ID, turn_id=TURN_ID, step_id="step-1"
+        ),
         MessageStartEvent(message=AssistantDraft(text="")),
         MessageUpdateEvent(message=AssistantDraft(text="Hel"), delta="Hel"),
         MessageUpdateEvent(message=AssistantDraft(text="Hello"), delta="lo"),
         MessageEndEvent(message=final),
-        AgentEndEvent(messages=result),
+        AssistantAttemptEndEvent(
+            attempt=attempt(
+                status="completed",
+                chunks=(
+                    TextChunk(text="Hel"),
+                    TextChunk(text="lo"),
+                    FinishChunk(stop_reason="stop"),
+                ),
+            )
+        ),
+        StepEndEvent(run_id=RUN_ID, turn_id=TURN_ID, step_id="step-1", reason="completed"),
+        TurnEndEvent(run_id=RUN_ID, turn_id=TURN_ID, reason="completed"),
+        AgentEndEvent(messages=result, run_id=RUN_ID),
     ]
 
 
@@ -137,6 +176,7 @@ async def test_stream_cancellation_commits_one_aborted_message_then_propagates()
             initial_messages=(),
             signal=token,
             event_sink=sink,
+            id_generator=SequentialIdGenerator(),
         )
     )
 
@@ -146,12 +186,17 @@ async def test_stream_cancellation_commits_one_aborted_message_then_propagates()
     with pytest.raises(asyncio.CancelledError):
         await asyncio.wait_for(task, timeout=0.1)
 
-    assert sink.events[:3] == [
-        AgentStartEvent(),
+    assert sink.events[:6] == [
+        AgentStartEvent(run_id=RUN_ID),
+        TurnStartEvent(run_id=RUN_ID, turn_id=TURN_ID),
+        StepStartEvent(run_id=RUN_ID, turn_id=TURN_ID, step_id="step-1"),
+        AssistantAttemptStartEvent(
+            attempt_id="attempt-1", run_id=RUN_ID, turn_id=TURN_ID, step_id="step-1"
+        ),
         MessageStartEvent(message=AssistantDraft(text="")),
         MessageUpdateEvent(message=AssistantDraft(text="partial"), delta="partial"),
     ]
-    message_end = sink.events[-2]
+    message_end = next(event for event in sink.events if isinstance(event, MessageEndEvent))
     assert isinstance(message_end, MessageEndEvent)
     aborted = message_end.message
     assert isinstance(aborted, AssistantMessage)
@@ -160,7 +205,17 @@ async def test_stream_cancellation_commits_one_aborted_message_then_propagates()
         stop_reason="aborted",
         error_message="Cancelled",
     )
-    assert sink.events[-1] == AgentEndEvent(messages=(aborted,))
+    attempt_end = next(
+        event for event in sink.events if isinstance(event, AssistantAttemptEndEvent)
+    )
+    assert attempt_end == AssistantAttemptEndEvent(
+        attempt=attempt(status="cancelled", chunks=(TextChunk(text="partial"),))
+    )
+    assert sink.events[-3:] == [
+        StepEndEvent(run_id=RUN_ID, turn_id=TURN_ID, step_id="step-1", reason="cancelled"),
+        TurnEndEvent(run_id=RUN_ID, turn_id=TURN_ID, reason="cancelled"),
+        AgentEndEvent(messages=(aborted,), run_id=RUN_ID),
+    ]
     assert sum(isinstance(event, MessageEndEvent) for event in sink.events) == 1
 
 
@@ -175,6 +230,11 @@ async def test_stream_without_a_terminal_message_is_a_contract_error() -> None:
             tool_executor=ScriptedToolExecutor([]),
             initial_messages=(),
             event_sink=sink,
+            id_generator=SequentialIdGenerator(),
         )
 
-    assert sink.events[-1] == AgentEndEvent(messages=())
+    assert sink.events[-3:] == [
+        StepEndEvent(run_id=RUN_ID, turn_id=TURN_ID, step_id="step-1", reason="model_error"),
+        TurnEndEvent(run_id=RUN_ID, turn_id=TURN_ID, reason="failed"),
+        AgentEndEvent(messages=(), run_id=RUN_ID),
+    ]

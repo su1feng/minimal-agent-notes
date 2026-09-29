@@ -3,6 +3,7 @@
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, field
 
+from src.lifecycle import LifecycleIdKind
 from src.model_stream import FinishChunk, ModelStreamChunk, TextChunk, ToolCallChunk
 from src.types import (
     AgentMessage,
@@ -15,6 +16,18 @@ from src.types import (
 
 type ModelOutcome = AssistantMessage | Exception
 type ToolOutcome = ToolExecutionResult | Exception
+
+
+@dataclass(slots=True)
+class SequentialIdGenerator:
+    """Generate deterministic lifecycle identifiers for event assertions."""
+
+    counts: dict[LifecycleIdKind, int] = field(default_factory=dict)
+
+    def new_id(self, kind: LifecycleIdKind) -> str:
+        number = self.counts.get(kind, 0) + 1
+        self.counts[kind] = number
+        return f"{kind}-{number}"
 
 
 @dataclass(slots=True)

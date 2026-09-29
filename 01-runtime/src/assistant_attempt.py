@@ -17,6 +17,8 @@ class AssistantAttempt:
 
     attempt_id: str
     run_id: str
+    turn_id: str
+    step_id: str
     status: AttemptStatus
     chunks: tuple[ModelStreamChunk, ...]
 
@@ -36,6 +38,8 @@ def finalize_attempt(
     *,
     attempt_id: str,
     run_id: str,
+    turn_id: str,
+    step_id: str,
     status: AttemptStatus,
     chunks: Sequence[ModelStreamChunk],
     assembler: AssistantMessageAssembler,
@@ -44,6 +48,8 @@ def finalize_attempt(
     attempt = AssistantAttempt(
         attempt_id=attempt_id,
         run_id=run_id,
+        turn_id=turn_id,
+        step_id=step_id,
         status=status,
         chunks=tuple(chunks),
     )

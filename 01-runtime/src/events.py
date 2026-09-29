@@ -3,17 +3,21 @@
 from dataclasses import dataclass, field
 from typing import Literal, Protocol
 
+from .assistant_attempt import AssistantAttempt
+from .lifecycle import StepEndReason, TurnEndReason
 from .types import AgentMessage, ToolCall, ToolExecutionResult
 
 
 @dataclass(frozen=True, slots=True)
 class AgentStartEvent:
+    run_id: str
     type: Literal["agent_start"] = field(default="agent_start", init=False)
 
 
 @dataclass(frozen=True, slots=True)
 class AgentEndEvent:
     messages: tuple[AgentMessage, ...]
+    run_id: str
     type: Literal["agent_end"] = field(default="agent_end", init=False)
 
     def __post_init__(self) -> None:
@@ -60,6 +64,53 @@ class ToolExecutionEndEvent:
     type: Literal["tool_execution_end"] = field(default="tool_execution_end", init=False)
 
 
+@dataclass(frozen=True, slots=True)
+class TurnStartEvent:
+    run_id: str
+    turn_id: str
+    type: Literal["turn_start"] = field(default="turn_start", init=False)
+
+
+@dataclass(frozen=True, slots=True)
+class TurnEndEvent:
+    run_id: str
+    turn_id: str
+    reason: TurnEndReason
+    type: Literal["turn_end"] = field(default="turn_end", init=False)
+
+
+@dataclass(frozen=True, slots=True)
+class StepStartEvent:
+    run_id: str
+    turn_id: str
+    step_id: str
+    type: Literal["step_start"] = field(default="step_start", init=False)
+
+
+@dataclass(frozen=True, slots=True)
+class StepEndEvent:
+    run_id: str
+    turn_id: str
+    step_id: str
+    reason: StepEndReason
+    type: Literal["step_end"] = field(default="step_end", init=False)
+
+
+@dataclass(frozen=True, slots=True)
+class AssistantAttemptStartEvent:
+    attempt_id: str
+    run_id: str
+    turn_id: str
+    step_id: str
+    type: Literal["assistant_attempt_start"] = field(default="assistant_attempt_start", init=False)
+
+
+@dataclass(frozen=True, slots=True)
+class AssistantAttemptEndEvent:
+    attempt: AssistantAttempt
+    type: Literal["assistant_attempt_end"] = field(default="assistant_attempt_end", init=False)
+
+
 type AgentEvent = (
     AgentStartEvent
     | AgentEndEvent
@@ -68,6 +119,12 @@ type AgentEvent = (
     | MessageEndEvent
     | ToolExecutionStartEvent
     | ToolExecutionEndEvent
+    | TurnStartEvent
+    | TurnEndEvent
+    | StepStartEvent
+    | StepEndEvent
+    | AssistantAttemptStartEvent
+    | AssistantAttemptEndEvent
 )
 
 

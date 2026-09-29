@@ -61,9 +61,9 @@ Durable Facts 是已经结算、可以持久化与恢复的运行事实；Epheme
 
 - 当前层级：**Level 1 — Agent Loop**。
 - 状态：进行中。
-- 已完成：Core Contracts 的当前最小集合，以及 Agent Loop 的模型调用、工具执行、结果回填和基本终止判断。
-- 当前主题：补齐 Turn Lifecycle、Step Lifecycle 与 Continue／Stop Decision，明确一次运行、一轮输入和一次模型步骤的边界。
-- 下一步：逐个阅读 Agent Runtime 参考项目中的 loop、turn 和 step 实现，比较其生命周期、终止条件、失败与取消语义，然后完善 `minimal-runtime` 的 Agent Loop。
+- 已完成：Core Contracts 的当前最小集合，Agent Loop 的模型调用、工具执行和结果回填，第一版 Run／Turn／Step 生命周期，以及带 Run／Turn／Step／Attempt 身份的模型请求结算。
+- 当前主题：集中 Continue／Stop Decision，明确模型重试与新 Step 的边界，并补齐工具批次的取消结算语义。
+- 下一步：将分散的终止判断收敛为显式决策，再区分取消时已 dispatch、尚未 dispatch 和结果未知的工具调用。
 
 ## CI
 

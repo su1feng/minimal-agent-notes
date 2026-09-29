@@ -6,27 +6,44 @@ from dataclasses import dataclass, field
 import pytest
 
 from src.agent_loop import run_agent_loop
+from src.assistant_attempt import AssistantAttempt, AttemptStatus
 from src.events import (
     AgentEndEvent,
     AgentEvent,
     AgentStartEvent,
+    AssistantAttemptEndEvent,
+    AssistantAttemptStartEvent,
     AssistantDraft,
     MessageEndEvent,
     MessageStartEvent,
     MessageUpdateEvent,
+    StepEndEvent,
+    StepStartEvent,
     ToolExecutionEndEvent,
     ToolExecutionStartEvent,
+    TurnEndEvent,
+    TurnStartEvent,
 )
+from src.model_stream import FinishChunk, ModelStreamChunk, TextChunk, ToolCallChunk
 from src.types import (
     AssistantMessage,
     CancellationToken,
+    ModelFormatError,
     TextContent,
     ToolCall,
     ToolExecutionResult,
     ToolResultMessage,
     UserMessage,
 )
-from tests.fakes import FakeCancellationToken, ScriptedModel, ScriptedToolExecutor
+from tests.fakes import (
+    FakeCancellationToken,
+    ScriptedModel,
+    ScriptedToolExecutor,
+    SequentialIdGenerator,
+)
+
+RUN_ID = "run-1"
+TURN_ID = "turn-1"
 
 
 @dataclass(slots=True)
@@ -47,6 +64,23 @@ def tool_request(call: ToolCall) -> AssistantMessage:
     return AssistantMessage(content=(call,), stop_reason="toolUse")
 
 
+def attempt(
+    *,
+    attempt_id: str,
+    step_id: str,
+    status: AttemptStatus,
+    chunks: tuple[ModelStreamChunk, ...],
+) -> AssistantAttempt:
+    return AssistantAttempt(
+        attempt_id=attempt_id,
+        run_id=RUN_ID,
+        turn_id=TURN_ID,
+        step_id=step_id,
+        status=status,
+        chunks=chunks,
+    )
+
+
 @pytest.mark.asyncio
 async def test_emits_a_closed_lifecycle_for_a_direct_answer() -> None:
     initial = (UserMessage(content="hello"),)
@@ -58,14 +92,30 @@ async def test_emits_a_closed_lifecycle_for_a_direct_answer() -> None:
         tool_executor=ScriptedToolExecutor([]),
         initial_messages=initial,
         event_sink=sink,
+        id_generator=SequentialIdGenerator(),
     )
 
     assert sink.events == [
-        AgentStartEvent(),
+        AgentStartEvent(run_id=RUN_ID),
+        TurnStartEvent(run_id=RUN_ID, turn_id=TURN_ID),
+        StepStartEvent(run_id=RUN_ID, turn_id=TURN_ID, step_id="step-1"),
+        AssistantAttemptStartEvent(
+            attempt_id="attempt-1", run_id=RUN_ID, turn_id=TURN_ID, step_id="step-1"
+        ),
         MessageStartEvent(message=AssistantDraft(text="")),
         MessageUpdateEvent(message=AssistantDraft(text="hi"), delta="hi"),
         MessageEndEvent(message=final),
-        AgentEndEvent(messages=result),
+        AssistantAttemptEndEvent(
+            attempt=attempt(
+                attempt_id="attempt-1",
+                step_id="step-1",
+                status="completed",
+                chunks=(TextChunk(text="hi"), FinishChunk(stop_reason="stop")),
+            )
+        ),
+        StepEndEvent(run_id=RUN_ID, turn_id=TURN_ID, step_id="step-1", reason="completed"),
+        TurnEndEvent(run_id=RUN_ID, turn_id=TURN_ID, reason="completed"),
+        AgentEndEvent(messages=result, run_id=RUN_ID),
     ]
 
 
@@ -93,20 +143,57 @@ async def test_emits_tool_events_before_the_corresponding_result_message() -> No
         tool_executor=ScriptedToolExecutor([execution_result]),
         initial_messages=initial,
         event_sink=sink,
+        id_generator=SequentialIdGenerator(),
     )
 
     assert sink.events == [
-        AgentStartEvent(),
+        AgentStartEvent(run_id=RUN_ID),
+        TurnStartEvent(run_id=RUN_ID, turn_id=TURN_ID),
+        StepStartEvent(run_id=RUN_ID, turn_id=TURN_ID, step_id="step-1"),
+        AssistantAttemptStartEvent(
+            attempt_id="attempt-1", run_id=RUN_ID, turn_id=TURN_ID, step_id="step-1"
+        ),
         MessageStartEvent(message=request),
         MessageEndEvent(message=request),
+        AssistantAttemptEndEvent(
+            attempt=attempt(
+                attempt_id="attempt-1",
+                step_id="step-1",
+                status="completed",
+                chunks=(
+                    ToolCallChunk(tool_call=call),
+                    FinishChunk(stop_reason="toolUse"),
+                ),
+            )
+        ),
         ToolExecutionStartEvent(tool_call=call),
         ToolExecutionEndEvent(tool_call=call, result=execution_result),
         MessageStartEvent(message=result_message),
         MessageEndEvent(message=result_message),
+        StepEndEvent(
+            run_id=RUN_ID,
+            turn_id=TURN_ID,
+            step_id="step-1",
+            reason="tool_results",
+        ),
+        StepStartEvent(run_id=RUN_ID, turn_id=TURN_ID, step_id="step-2"),
+        AssistantAttemptStartEvent(
+            attempt_id="attempt-2", run_id=RUN_ID, turn_id=TURN_ID, step_id="step-2"
+        ),
         MessageStartEvent(message=AssistantDraft(text="")),
         MessageUpdateEvent(message=AssistantDraft(text="done"), delta="done"),
         MessageEndEvent(message=final),
-        AgentEndEvent(messages=result),
+        AssistantAttemptEndEvent(
+            attempt=attempt(
+                attempt_id="attempt-2",
+                step_id="step-2",
+                status="completed",
+                chunks=(TextChunk(text="done"), FinishChunk(stop_reason="stop")),
+            )
+        ),
+        StepEndEvent(run_id=RUN_ID, turn_id=TURN_ID, step_id="step-2", reason="completed"),
+        TurnEndEvent(run_id=RUN_ID, turn_id=TURN_ID, reason="completed"),
+        AgentEndEvent(messages=result, run_id=RUN_ID),
     ]
 
 
@@ -122,6 +209,7 @@ async def test_tool_exception_is_observable_as_an_error_result() -> None:
         tool_executor=ScriptedToolExecutor([RuntimeError("boom")]),
         initial_messages=(),
         event_sink=sink,
+        id_generator=SequentialIdGenerator(),
     )
 
     tool_end = next(event for event in sink.events if isinstance(event, ToolExecutionEndEvent))
@@ -134,7 +222,45 @@ async def test_tool_exception_is_observable_as_an_error_result() -> None:
     result_message = result[-2]
     assert isinstance(result_message, ToolResultMessage)
     assert MessageEndEvent(message=result_message) in sink.events
-    assert sink.events[-1] == AgentEndEvent(messages=result)
+    assert sink.events[-1] == AgentEndEvent(messages=result, run_id=RUN_ID)
+
+
+@pytest.mark.asyncio
+async def test_format_error_settles_its_attempt_before_the_next_step() -> None:
+    feedback = UserMessage(content="Return valid output")
+    final = answer("recovered")
+    sink = RecordingEventSink()
+
+    result = await run_agent_loop(
+        model=ScriptedModel([ModelFormatError(feedback), final]),
+        tool_executor=ScriptedToolExecutor([]),
+        initial_messages=(),
+        event_sink=sink,
+        id_generator=SequentialIdGenerator(),
+    )
+
+    attempts = [
+        event.attempt for event in sink.events if isinstance(event, AssistantAttemptEndEvent)
+    ]
+    assert [(item.attempt_id, item.step_id, item.status) for item in attempts] == [
+        ("attempt-1", "step-1", "failed"),
+        ("attempt-2", "step-2", "completed"),
+    ]
+    assert attempts[0].chunks == ()
+    format_step_end = sink.events.index(
+        StepEndEvent(
+            run_id=RUN_ID,
+            turn_id=TURN_ID,
+            step_id="step-1",
+            reason="format_error",
+        )
+    )
+    feedback_start = sink.events.index(MessageStartEvent(message=feedback))
+    next_step_start = sink.events.index(
+        StepStartEvent(run_id=RUN_ID, turn_id=TURN_ID, step_id="step-2")
+    )
+    assert format_step_end < feedback_start < next_step_start
+    assert result == (feedback, final)
 
 
 @dataclass(slots=True)
@@ -187,6 +313,7 @@ async def test_cancellation_during_a_tool_closes_promptly_without_result_events(
             initial_messages=(),
             signal=token,
             event_sink=sink,
+            id_generator=SequentialIdGenerator(),
         )
     )
 
@@ -197,11 +324,29 @@ async def test_cancellation_during_a_tool_closes_promptly_without_result_events(
         await asyncio.wait_for(task, timeout=0.1)
 
     assert sink.events == [
-        AgentStartEvent(),
+        AgentStartEvent(run_id=RUN_ID),
+        TurnStartEvent(run_id=RUN_ID, turn_id=TURN_ID),
+        StepStartEvent(run_id=RUN_ID, turn_id=TURN_ID, step_id="step-1"),
+        AssistantAttemptStartEvent(
+            attempt_id="attempt-1", run_id=RUN_ID, turn_id=TURN_ID, step_id="step-1"
+        ),
         MessageStartEvent(message=request),
         MessageEndEvent(message=request),
+        AssistantAttemptEndEvent(
+            attempt=attempt(
+                attempt_id="attempt-1",
+                step_id="step-1",
+                status="completed",
+                chunks=(
+                    ToolCallChunk(tool_call=call),
+                    FinishChunk(stop_reason="toolUse"),
+                ),
+            )
+        ),
         ToolExecutionStartEvent(tool_call=call),
-        AgentEndEvent(messages=(request,)),
+        StepEndEvent(run_id=RUN_ID, turn_id=TURN_ID, step_id="step-1", reason="cancelled"),
+        TurnEndEvent(run_id=RUN_ID, turn_id=TURN_ID, reason="cancelled"),
+        AgentEndEvent(messages=(request,), run_id=RUN_ID),
     ]
     events_after_cancellation = tuple(sink.events)
     await asyncio.sleep(0)
@@ -222,11 +367,17 @@ async def test_pre_cancelled_run_only_emits_the_lifecycle_boundary() -> None:
             initial_messages=(),
             signal=token,
             event_sink=sink,
+            id_generator=SequentialIdGenerator(),
         )
 
     assert model.calls == []
     assert tools.calls == []
-    assert sink.events == [AgentStartEvent(), AgentEndEvent(messages=())]
+    assert sink.events == [
+        AgentStartEvent(run_id=RUN_ID),
+        TurnStartEvent(run_id=RUN_ID, turn_id=TURN_ID),
+        TurnEndEvent(run_id=RUN_ID, turn_id=TURN_ID, reason="cancelled"),
+        AgentEndEvent(messages=(), run_id=RUN_ID),
+    ]
 
 
 @pytest.mark.asyncio
@@ -248,9 +399,13 @@ async def test_step_limit_error_still_ends_the_lifecycle() -> None:
             initial_messages=(),
             max_steps=1,
             event_sink=sink,
+            id_generator=SequentialIdGenerator(),
         )
 
-    assert sink.events[-1] == AgentEndEvent(messages=(request, result_message))
+    assert sink.events[-2:] == [
+        TurnEndEvent(run_id=RUN_ID, turn_id=TURN_ID, reason="step_limit"),
+        AgentEndEvent(messages=(request, result_message), run_id=RUN_ID),
+    ]
     assert sum(isinstance(event, AgentEndEvent) for event in sink.events) == 1
 
 
@@ -279,8 +434,18 @@ async def test_model_error_after_tool_result_keeps_prior_messages_without_a_fina
             tool_executor=ScriptedToolExecutor([tool_result]),
             initial_messages=initial,
             event_sink=sink,
+            id_generator=SequentialIdGenerator(),
         )
 
     assert model.calls[1] == (*initial, request, result_message)
-    assert sink.events[-1] == AgentEndEvent(messages=(*initial, request, result_message))
+    failed_attempt = next(
+        event
+        for event in sink.events
+        if isinstance(event, AssistantAttemptEndEvent) and event.attempt.status == "failed"
+    )
+    assert failed_attempt.attempt.step_id == "step-2"
+    assert sink.events[-2:] == [
+        TurnEndEvent(run_id=RUN_ID, turn_id=TURN_ID, reason="failed"),
+        AgentEndEvent(messages=(*initial, request, result_message), run_id=RUN_ID),
+    ]
     assert MessageEndEvent(message=failed_answer) not in sink.events
